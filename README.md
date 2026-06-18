@@ -7,7 +7,7 @@
 - `REQUIREMENTS.md` — 三期需求规划（一期 MVP：生成 → 执行预览 → 错误可见 → AI 自我修复 → 导出静态 HTML）
 - `prototype.html` — 一期高保真可交互原型（浏览器直接打开）
 
-技术基线：Next.js + Monaco + Babel standalone + iframe 沙箱，LLM 经服务端代理。
+技术基线：Next.js + Monaco + esbuild-wasm（浏览器内转译）+ iframe 沙箱，LLM 经服务端代理（DeepSeek）+ Postgres 持久化。
 
 ## 预览原型
 

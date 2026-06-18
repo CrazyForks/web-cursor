@@ -1,7 +1,7 @@
 # Web Cursor · AI React Playground 需求文档
 
 > 版本 v0.1 ｜ 本文件只定义"做什么 / 为什么 / 分期",不涉及技术实现。
-> 技术基线(已定):Next.js(App Router)+ Monaco + Babel standalone + iframe 沙箱;LLM 经服务端代理。
+> 技术基线(已定):Next.js(App Router)+ Monaco + esbuild-wasm(浏览器内转译)+ iframe 沙箱;LLM 经服务端代理。
 
 ---
 
