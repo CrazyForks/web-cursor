@@ -14,8 +14,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SandboxController } from "@/lib/sandbox/controller";
 import { transpile, TranspileError } from "@/lib/transpile";
-import { postToolResult, streamChat, type ChatTurn } from "@/lib/chatClient";
+import { postToolResult, streamChat } from "@/lib/chatClient";
 import type { Message, Phase, Status, Overlay } from "@/lib/types";
+import type { ChatTurn } from "@/types/chat";
+import { ToolResultType } from "@/types/tool";
 
 const MAX_ATTEMPTS = 4;
 const EMPTY_OVERLAY: Overlay = { show: false, message: "", stack: "", showStack: false };
@@ -31,10 +33,6 @@ type StoredMessage = {
 type StoredMeta = {
   kind?: "code" | "reply";
 };
-
-function titleFromPrompt(p: string): string {
-  return p.length > 16 ? p.slice(0, 16) + "…" : p;
-}
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   let timer: number | undefined;
@@ -69,6 +67,11 @@ export function useChat() {
   const [previewActive, setPreviewActive] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string | undefined>(undefined);
   const [currentConversationId, setCurrentConversationId] = useState<string | undefined>(undefined);
+  const [lastTitleUpdate, setLastTitleUpdate] = useState<{
+    conversationId: string;
+    title: string;
+    projectTitle?: string;
+  } | null>(null);
 
   const ensureSandbox = useCallback(() => {
     if (iframeRef.current && !sandboxRef.current) {
@@ -181,7 +184,7 @@ export function useChat() {
           return;
         }
         const result = await withTimeout(sandbox.run(js), RESTORE_TIMEOUT_MS);
-        if (result?.type === "RENDER_OK") {
+        if (result?.type === ToolResultType.RenderOk) {
           setStatus({ kind: "ok", text: "历史预览已恢复" });
           setOverlay((o) => ({ ...o, show: false }));
         } else if (result) {
@@ -236,6 +239,9 @@ export function useChat() {
               setCode((c) => c + ev.delta);    // 编辑器增量追加
             } else if (ev.type === "chat") {
               updateAi((m) => ({ ...m, chatText: (m.chatText ?? "") + ev.delta }));
+            } else if (ev.type === "title") {
+              if (ev.projectTitle) setProjName(ev.projectTitle);
+              setLastTitleUpdate({ conversationId: ev.conversationId, title: ev.title, projectTitle: ev.projectTitle });
             } else if (ev.type === "error") {
               throw new Error(ev.message);
             }
@@ -278,7 +284,7 @@ export function useChat() {
           if (convIdRef.current && toolCallId) {
             await postToolResult(convIdRef.current, toolCallId, {
               status: "error",
-              type: "COMPILE_ERROR",
+              type: ToolResultType.CompileError,
               message: txt,
             });
             if (attempt === MAX_ATTEMPTS) return finishFail();
@@ -305,13 +311,13 @@ export function useChat() {
         if (abortRef.current.aborted) return;
 
         // 5) 读结果
-        if (result.type === "RENDER_OK") {
+        if (result.type === ToolResultType.RenderOk) {
           const toolCallId = pendingToolCallIdRef.current;
           pendingToolCallIdRef.current = undefined;
           if (convIdRef.current && toolCallId) {
             await postToolResult(convIdRef.current, toolCallId, {
               status: "ok",
-              type: "RENDER_OK",
+              type: ToolResultType.RenderOk,
               durationMs: dur,
             });
           }
@@ -338,7 +344,7 @@ export function useChat() {
         if (convIdRef.current && toolCallId) {
           await postToolResult(convIdRef.current, toolCallId, {
             status: "error",
-            type: "RUNTIME_ERROR",
+            type: ToolResultType.RuntimeError,
             message: result.message,
             stack: result.stack,
           });
@@ -369,7 +375,6 @@ export function useChat() {
       if (busy || !prompt.trim() || !ensureSandbox()) return;
       const p = prompt.trim();
       lastPromptRef.current = p;
-      setProjName(titleFromPrompt(p));
 
       const userId = crypto.randomUUID();
       const aiId = crypto.randomUUID();
@@ -421,6 +426,7 @@ export function useChat() {
     previewActive,
     currentProjectId,
     currentConversationId,
+    lastTitleUpdate,
     openProject,
     openConversation,
     send,

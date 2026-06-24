@@ -4,31 +4,20 @@
  * [POS]: A 域 LLM 代理 —— 持 key、读 DB transcript、流式转发 DeepSeek
  * [PROTOCOL]: tool result 不在这里落库；前端先调用 tool-results 闭合 tool_call，再用 resume 触发修复续写。
  */
-import { z } from "zod";
 import { parse, Allow } from "partial-json";
 import { toLLMMessages } from "@/server/context";
 import { db } from "@/server/db";
 import { conversations, projects } from "@/server/db/schema";
-import deepseekClient, { SYSTEM_PROMPT, TOOL_TYPE, tools } from "@/server/deepseek";
+import deepseekClient, { SYSTEM_PROMPT, tools } from "@/server/deepseek";
 import { appendMessage, listMessages } from "@/server/messages";
 import { ownsConversation, ownsProject } from "@/server/guard";
 import { closeInterruptedToolCall } from "@/server/toolCalls";
+import { updateGeneratedTitles } from "@/server/titles";
+import { ChatTurnSchema, type ChatEvent, type ChatTurn } from "@/types/chat";
+import { ToolName } from "@/types/tool";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const ChatBodySchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("user"),
-    message: z.string().min(1),
-    projectId: z.string().uuid().optional(),
-    conversationId: z.string().uuid().optional(),
-  }),
-  z.object({
-    kind: z.literal("resume"),
-    conversationId: z.string().uuid(),
-  }),
-]);
 
 type DbMessage = Awaited<ReturnType<typeof listMessages>>[number];
 
@@ -46,6 +35,7 @@ async function streamAssistant(
   projectId: string | undefined,
   created: boolean,
   rows: DbMessage[],
+  userMessage?: string,
 ) {
   const stream = await deepseekClient.chat.completions.create({
     messages: [{ role: "system", content: SYSTEM_PROMPT }, ...toLLMMessages(rows)],
@@ -57,7 +47,7 @@ async function streamAssistant(
 
   return sseResponse(new ReadableStream({
     async start(controller) {
-      const send = (o: unknown) => {
+      const send = (o: ChatEvent) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(o)}\n\n`));
       };
 
@@ -70,7 +60,7 @@ async function streamAssistant(
       let text = "";
       let toolCallId = "";
 
-      if (created) {
+      if (created && projectId) {
         send({ type: "init", conversationId, projectId });
       }
 
@@ -92,14 +82,14 @@ async function streamAssistant(
           if (tc?.function?.name) name = tc.function.name;
           if (tc?.function?.arguments) {
             args += tc.function.arguments;
-            if (name === TOOL_TYPE.WRITE_APP) {
+            if (name === ToolName.WriteApp) {
               const code = parse(args, Allow.STR | Allow.OBJ)?.code ?? "";
               if (code.length > sentCode) {
                 send({ type: "code", delta: code.slice(sentCode) });
                 sentCode = code.length;
               }
               finalCode = code;
-            } else if (name === TOOL_TYPE.REPLY) {
+            } else if (name === ToolName.Reply) {
               const reply = parse(args, Allow.STR | Allow.OBJ)?.message ?? "";
               if (reply.length > sentReply) {
                 send({ type: "chat", delta: reply.slice(sentReply) });
@@ -124,10 +114,19 @@ async function streamAssistant(
             meta: {
               kind: finalCode ? "code" : "reply",
               ...(toolCallId ? {
-                toolCalls: [{ id: toolCallId, name: name || TOOL_TYPE.WRITE_APP, arguments: args }],
+                toolCalls: [{ id: toolCallId, name: name || ToolName.WriteApp, arguments: args }],
               } : {}),
             },
           });
+          if (userMessage) {
+            try {
+              // 标题依赖 assistant 的完整产出；失败时保持 untitled，不影响主对话闭环。
+              const titleUpdate = await updateGeneratedTitles({ conversationId, projectId, userMessage, assistantContent: content });
+              if (titleUpdate) send({ type: "title", conversationId, ...titleUpdate });
+            } catch (titleError) {
+              console.warn("Failed to generate chat title", titleError);
+            }
+          }
         }
         send({ type: "done" });
       } catch (e) {
@@ -143,9 +142,9 @@ export async function POST(req: Request) {
   const ownerId = req.headers.get("x-owner-id");
   if (!ownerId) return new Response("Unauthorized", { status: 401 });
 
-  let body: z.infer<typeof ChatBodySchema>;
+  let body: ChatTurn;
   try {
-    body = ChatBodySchema.parse(await req.json());
+    body = ChatTurnSchema.parse(await req.json());
   } catch (e) {
     return Response.json({ error: "bad request", detail: String(e) }, { status: 400 });
   }
@@ -188,5 +187,5 @@ export async function POST(req: Request) {
   });
 
   const rows = await listMessages(conversationId);
-  return streamAssistant(conversationId, projectId, created, rows);
+  return streamAssistant(conversationId, projectId, created, rows, body.message);
 }

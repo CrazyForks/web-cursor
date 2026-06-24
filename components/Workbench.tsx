@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { req } from "@/lib/api";
 import { useChat } from "@/hooks/useChat";
@@ -82,6 +82,7 @@ export default function Workbench({ projectId }: { projectId?: string }) {
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [loadingProject, setLoadingProject] = useState(!!projectId);
   const [loadingConversationId, setLoadingConversationId] = useState<string | null>(null);
+  const initialConversationIdRef = useRef<string | null>(null);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -95,19 +96,13 @@ export default function Workbench({ projectId }: { projectId?: string }) {
       const detail = await req<ProjectDetail>("GET", `/api/projects/${projectId}`);
       setProjectDetail(detail);
       openProject({ id: detail.id, title: detail.title });
-
-      if (detail.conversations[0]) {
-        setLoadingConversationId(detail.conversations[0].id);
-        const rows = await req<StoredMessage[]>("GET", `/api/conversations/${detail.conversations[0].id}/messages`);
-        await restoreConversation({ id: detail.id, title: detail.title }, detail.conversations[0].id, rows);
-      }
+      initialConversationIdRef.current = detail.conversations[0]?.id ?? null;
     } catch (e) {
       showToast(String(e instanceof Error ? e.message : e));
     } finally {
-      setLoadingConversationId(null);
       setLoadingProject(false);
     }
-  }, [openProject, projectId, restoreConversation]);
+  }, [openProject, projectId]);
 
   useEffect(() => {
     loadProject();
@@ -129,6 +124,29 @@ export default function Workbench({ projectId }: { projectId?: string }) {
     [projectDetail, restoreConversation]
   );
 
+  useEffect(() => {
+    if (loadingProject || !projectDetail || !initialConversationIdRef.current) return;
+    const conversationId = initialConversationIdRef.current;
+    initialConversationIdRef.current = null;
+    openConversation(conversationId);
+  }, [loadingProject, openConversation, projectDetail]);
+
+  useEffect(() => {
+    const titleUpdate = s.lastTitleUpdate;
+    if (!titleUpdate) return;
+    setProjectDetail((detail) => detail
+      ? {
+          ...detail,
+          title: titleUpdate.projectTitle ?? detail.title,
+          conversations: detail.conversations.map((conversation) =>
+            conversation.id === titleUpdate.conversationId
+              ? { ...conversation, title: titleUpdate.title }
+              : conversation
+          ),
+        }
+      : detail);
+  }, [s.lastTitleUpdate]);
+
   const newConversation = useCallback(() => {
     if (!projectDetail) return;
     openProject({ id: projectDetail.id, title: projectDetail.title });
@@ -149,7 +167,7 @@ export default function Workbench({ projectId }: { projectId?: string }) {
   return (
     <div className="h-screen flex flex-col">
       <TopBar
-        projName={projectDetail?.title ?? s.projName}
+        projName={s.projName}
         canAct={s.hasResult && !s.busy}
         onHome={projectId ? () => router.push("/") : undefined}
         onRerun={s.rerun}

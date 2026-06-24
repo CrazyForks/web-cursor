@@ -6,9 +6,9 @@
  */
 import "server-only";
 import { appendMessage, listMessages } from "./messages";
+import { ToolResultType, type ToolCallMeta } from "@/types/tool";
 
 type DbMessage = Awaited<ReturnType<typeof listMessages>>[number];
-type ToolCallMeta = { id: string; name: string; arguments?: string };
 
 export function findUnclosedToolCall(rows: DbMessage[]): ToolCallMeta | null {
   const closed = new Set<string>();
@@ -36,7 +36,7 @@ export async function closeInterruptedToolCall(conversationId: string, rows: DbM
     role: "tool",
     content: JSON.stringify({
       status: "error",
-      type: "TOOL_INTERRUPTED",
+      type: ToolResultType.ToolInterrupted,
       message: "Client did not return a tool result.",
     }),
     meta: { toolCallId: missing.id },

@@ -8,10 +8,10 @@
 import "server-only";
 import type OpenAI from "openai";
 import type { messages } from "./db/schema";
+import type { ToolCallMeta } from "@/types/tool";
 
 type DbMessage = typeof messages.$inferSelect;        // drizzle 自动推断的行类型
 type LLMMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
-type ToolCallMeta = { id: string; name: string; arguments?: string };
 type Meta = { toolCalls?: ToolCallMeta[]; toolCallId?: string };
 
 /** DB transcript → DeepSeek messages（function-calling 成对还原）。 */

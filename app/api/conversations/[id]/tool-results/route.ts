@@ -7,16 +7,11 @@
 import { z } from "zod";
 import { appendMessage } from "@/server/messages";
 import { ownsConversation } from "@/server/guard";
+import { ToolResultSchema } from "@/types/toolSchema";
 
-const ToolResultSchema = z.object({
+const ToolResultBodySchema = z.object({
   toolCallId: z.string().min(1),
-  result: z.object({
-    status: z.enum(["ok", "error"]),
-    type: z.string().min(1),
-    message: z.string().optional(),
-    stack: z.string().optional(),
-    durationMs: z.number().optional(),
-  }).passthrough(),
+  result: ToolResultSchema,
 });
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -31,7 +26,7 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   try {
-    const body = ToolResultSchema.parse(await req.json());
+    const body = ToolResultBodySchema.parse(await req.json());
     await appendMessage(id, {
       role: "tool",
       content: JSON.stringify(body.result),

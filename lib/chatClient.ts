@@ -7,33 +7,8 @@
 "use client";
 
 import { getOwnerId } from "./owner";
-
-export type ChatEvent =
-  | { type: "init"; conversationId: string; projectId: string }
-  | { type: "code"; delta: string }
-  | { type: "chat"; delta: string }
-  | { type: "tools_call"; index: number; name: string; id: string}
-  | { type: "done" }
-  | { type: "error"; message: string };
-
-export type ToolResult =
-  | { status: "ok"; type: "RENDER_OK"; durationMs?: number }
-  | { status: "error"; type: "COMPILE_ERROR"; message: string }
-  | { status: "error"; type: "RUNTIME_ERROR"; message: string; stack?: string }
-  | { status: "error"; type: "TOOL_INTERRUPTED"; message: string };
-
-export type ChatTurn =
-  | {
-      kind: "user";
-      message: string;
-      projectId?: string;
-      conversationId?: string;
-    }
-  | {
-      // Resume means: append nothing, reload the closed transcript, and ask the LLM for the next assistant turn.
-      kind: "resume";
-      conversationId: string;
-    };
+import type { ChatEvent, ChatTurn } from "@/types/chat";
+import type { ToolResult } from "@/types/tool";
 
 /** 调后端 /api/chat，逐条 yield SSE 事件。自带 x-owner-id；流关闭即结束。 */
 export async function* streamChat(turn: ChatTurn): AsyncIterable<ChatEvent> {
