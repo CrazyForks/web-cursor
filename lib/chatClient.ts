@@ -1,23 +1,46 @@
 /**
- * [INPUT]: 一条 message（用户需求 / 自我修复的报错反馈）
- * [OUTPUT]: 流式 ChatEvent（code 快照 / chat 文本 / done / error）
- * [POS]: B 域 → A 域后端的调用门面。对接后端 /api/chat 的 SSE 协议。
- * [PROTOCOL]: 后端每条 `data: {type,...}`：code/chat 为"当前完整快照"，done 收尾，error 异常
+ * [INPUT]: 一个 chat turn（用户需求 / resume 续写）+ 当前 project/conversation id
+ * [OUTPUT]: 流式 ChatEvent（init / code 增量 / chat 文本 / done / error）
+ * [POS]: B 域 → A 域后端的调用门面。对接 /api/chat 的 SSE 协议，自带 x-owner-id。
+ * [PROTOCOL]: code 是增量 delta；tool result 走 postToolResult，只闭合 tool_call，不触发 LLM。
  */
 "use client";
 
+import { getOwnerId } from "./owner";
+
 export type ChatEvent =
-  | { type: "code"; code: string }
-  | { type: "chat"; message: string }
+  | { type: "init"; conversationId: string; projectId: string }
+  | { type: "code"; delta: string }
+  | { type: "chat"; delta: string }
+  | { type: "tools_call"; index: number; name: string; id: string}
   | { type: "done" }
   | { type: "error"; message: string };
 
-/** 调后端 /api/chat，逐条 yield 后端发来的 SSE 事件。流关闭即结束。 */
-export async function* streamChat(message: string): AsyncIterable<ChatEvent> {
+export type ToolResult =
+  | { status: "ok"; type: "RENDER_OK"; durationMs?: number }
+  | { status: "error"; type: "COMPILE_ERROR"; message: string }
+  | { status: "error"; type: "RUNTIME_ERROR"; message: string; stack?: string }
+  | { status: "error"; type: "TOOL_INTERRUPTED"; message: string };
+
+export type ChatTurn =
+  | {
+      kind: "user";
+      message: string;
+      projectId?: string;
+      conversationId?: string;
+    }
+  | {
+      // Resume means: append nothing, reload the closed transcript, and ask the LLM for the next assistant turn.
+      kind: "resume";
+      conversationId: string;
+    };
+
+/** 调后端 /api/chat，逐条 yield SSE 事件。自带 x-owner-id；流关闭即结束。 */
+export async function* streamChat(turn: ChatTurn): AsyncIterable<ChatEvent> {
   const res = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    headers: { "Content-Type": "application/json", "x-owner-id": getOwnerId() },
+    body: JSON.stringify(turn),
   });
 
   if (!res.ok || !res.body) {
@@ -48,5 +71,18 @@ export async function* streamChat(message: string): AsyncIterable<ChatEvent> {
         // 半截/心跳，忽略
       }
     }
+  }
+}
+
+/** Close one pending model tool call. This records execution result only; it never calls the LLM. */
+export async function postToolResult(conversationId: string, toolCallId: string, result: ToolResult): Promise<void> {
+  const res = await fetch(`/api/conversations/${conversationId}/tool-results`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-owner-id": getOwnerId() },
+    body: JSON.stringify({ toolCallId, result }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`/api/conversations/${conversationId}/tool-results ${res.status} ${detail}`.trim());
   }
 }

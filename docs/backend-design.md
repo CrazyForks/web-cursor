@@ -4,6 +4,8 @@
 > 技术栈：Next.js App Router（Route Handler）+ Postgres（Neon）+ drizzle-orm + zod。
 > 伪代码是 TS 风格，便于理解；不是最终实现，落地时按真实 API 调整。
 
+> ⚠️ **本文以 `docs/backend-todo.md` 为权威（2026-06 · B-shared / Cursor 模型）**：`projects 1—N conversations 1—N messages`，`project_files` 挂项目、**会话间共享**（切会话不改代码）。`/api/chat` 收 `projectId`（必传）+ `conversationId`（可选，没传则懒建会话、经 SSE `init` 回传 conversationId），**无独立"建会话"接口（⑩ 不实现）**。四表均加 `deleted_at` 软删；不抽响应信封（裸返数据）。下方凡与此冲突，一律以 `backend-todo.md` 为准。
+
 ---
 
 ## 0. 先搞清楚：后端在整个 agent 里是什么角色
@@ -46,7 +48,9 @@
 
 ### 1.1 统一响应格式
 
-所有 **JSON 接口**（除 `/api/chat` 流式外）统一信封，前端好处理：
+> ⚠️ **已弃用（见 `docs/backend-todo.md` S6 决策）**：`ok`/`fail`/`HttpError` 零逻辑、当前零收益，不抽。接口直接 `Response.json(data, {status})`、错误 `Response.json({ error }, {status})` + 内联 try/catch。下面这套信封留作将来参考——等"接口多到重复烦人 / 前端需要统一形状"时再引。
+
+（原方案，留作参考）所有 **JSON 接口**（除 `/api/chat` 流式外）统一信封，前端好处理：
 
 ```ts
 // 成功
@@ -118,6 +122,8 @@ async function callDeepSeek({ messages, model }) {
 ## 2. 数据库表结构
 
 四张表，关系：`projects 1—N project_files`、`projects 1—N conversations 1—N messages`。
+
+> **🗑 软删（v0.2 补充，覆盖下方所有表/接口）**：四表均加 `deleted_at timestamptz`（null=存活）。约定见 `docs/backend-todo.md` S3 "软删约定"——① 所有读 `WHERE deleted_at IS NULL`；② DELETE 接口（⑥）改为 `UPDATE … SET deleted_at=now()` 并级联软删子表，不再依赖下文的硬删 CASCADE；③ `project_files` 的 `UNIQUE(project_id, path)` 改为**部分唯一索引** `WHERE deleted_at IS NULL`（否则软删后重建同名 path 撞约束）。下方建表 SQL 以最终 schema（`lib/db/schema.ts`）为准。
 
 ```sql
 -- 项目（owner_id 用来做数据隔离）
@@ -220,7 +226,8 @@ Content-Type: application/json
 x-owner-id: <uuid>
 
 {
-  "conversationId": "uuid",          // 哪个会话，后端据此读历史
+  "projectId": "uuid",               // 必传，会话挂在哪个项目下（懒建会话时用）
+  "conversationId": "uuid",          // 可选！没传 → 后端新建会话并经 SSE init 事件回传 id
   "role": "user",                    // 'user'（新需求）或 'tool'（沙箱报错反馈）
   "content": "做一个待办列表",
   "model": "deepseek-chat",          // 可选，缺省 deepseek-chat
@@ -228,6 +235,7 @@ x-owner-id: <uuid>
 }
 ```
 > 前端**不传 messages**——它根本不持有历史。只说"在这个会话里，我这轮要说这句"。
+> **会话懒创建**：前端首次对话不带 `conversationId`，后端用 `projectId` 建新会话，并在 SSE 流最前面发一条 `{ "type":"init", "conversationId":"<新id>" }` 回传；前端记下，之后每轮带着它。"新会话" = 前端清掉 id。**因此没有独立的"建会话"接口（原 ⑩ 删）。**
 
 **响应**：SSE 流（`text/event-stream`），每个分片是 DeepSeek 原样的 chunk：
 ```
@@ -252,12 +260,15 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const ChatSchema = z.object({
-  conversationId: z.string().uuid(),
+  projectId: z.string().uuid(),                   // 必传：懒建会话挂在它下面
+  conversationId: z.string().uuid().optional(),   // 可选：没传就新建，新 id 经 SSE init 回传
   role: z.enum(['user', 'tool']),                 // 只有这两种是"输入"
   content: z.string().min(1),
   model: z.string().optional(),
   meta: z.any().optional(),
 })
+// 解析会话：conversationId 在 → 校验归属取用；不在 → insert conversations(projectId) 拿新 id（created=true）
+// SSE 最前面：if (created) 发 { type:'init', conversationId }
 
 export async function POST(req) {
   const ownerId = requireOwner(req)
@@ -551,7 +562,9 @@ export async function GET(req, { params }) {
 }
 ```
 
-### ⑩ POST /api/projects/[id]/conversations —— 新建会话
+### ⑩ POST /api/projects/[id]/conversations —— 新建会话（❌ 本期删除）
+
+> **不实现**：会话改为由 `/api/chat`（①）懒创建（不带 conversationId 即新建，经 SSE `init` 回传 id）。"新会话" = 前端清 id 即可，无需独立端点。下方伪代码留作将来参考（若以后要"建空会话"再启用）。
 
 **用途**：开始一轮新对话（比如用户清空重聊）。
 **伪代码**
@@ -699,7 +712,9 @@ drizzle.config.ts
 
 ---
 
-## 7. 错误处理统一出口（可选但推荐）
+## 7. 错误处理统一出口（已弃用，见 backend-todo S6/S14 决策）
+
+> 当前不抽 `route()` wrapper，每个接口内联 try/catch。下文留作将来参考。
 
 每个 route 里 try/catch 太啰嗦，包一个 wrapper：
 

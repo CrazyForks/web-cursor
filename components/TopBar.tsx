@@ -8,11 +8,13 @@ const btnPrimary = `${btn} bg-accent border-accent text-[#04101f] font-semibold 
 export default function TopBar({
   projName,
   canAct,
+  onHome,
   onRerun,
   onExport,
 }: {
   projName: string;
   canAct: boolean;
+  onHome?: () => void;
   onRerun: () => void;
   onExport: () => void;
 }) {
@@ -23,6 +25,14 @@ export default function TopBar({
         Web Cursor
       </div>
       <span className="text-muted text-[13px]">
+        {onHome && (
+          <button
+            className="mr-2 px-2 py-1 rounded-md text-accent hover:bg-panel2"
+            onClick={onHome}
+          >
+            我的项目
+          </button>
+        )}
         · <b className="text-fg font-medium">{projName}</b>
       </span>
       <div className="flex-1" />

@@ -33,7 +33,7 @@ export default function ChatPanel({
   }, [messages]);
 
   return (
-    <div className="flex flex-col min-w-0 h-full w-[340px] flex-none border-r border-border bg-panel">
+    <div className="flex flex-col min-w-0 h-full w-full bg-panel">
       <div className="h-9 flex-none flex items-center gap-2 px-[14px] border-b border-border text-[12px] text-muted uppercase tracking-[0.06em]">
         <span>💬</span> AI 对话 · Agent
       </div>
