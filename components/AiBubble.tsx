@@ -4,6 +4,7 @@ import Spinner from "./Spinner";
 import MarkdownMessage from "./MarkdownMessage";
 import type { AgentFileChange } from "@/lib/types";
 import { PHASE_LABEL, type Message } from "@/lib/types";
+import { useConversationStore } from "@/lib/conversationStore";
 
 type AiMsg = Extract<Message, { role: "ai" }>;
 
@@ -21,7 +22,9 @@ function changeLabel(change: AgentFileChange) {
   return "写入";
 }
 
-export default function AiBubble({ m, busy }: { m: AiMsg; busy: boolean }) {
+export default function AiBubble({ m }: { m: AiMsg }) {
+  const busy = useConversationStore((state) => state.busy && state.activeAiId === m.id);
+  const activityText = useConversationStore((state) => state.activityText);
   const hasHeal =
     m.attempts.length > 1 ||
     m.attempts.some((a) => a.phase === "compile-fail" || a.phase === "runtime-fail");
@@ -62,6 +65,13 @@ export default function AiBubble({ m, busy }: { m: AiMsg; busy: boolean }) {
           ))}
         </div>
       ) : null}
+
+      {busy && (m.fileChanges?.length || m.chatText) && !m.summary && (
+        <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-border bg-[#10151d] px-2.5 py-1.5 text-[12.5px] text-muted">
+          <Spinner />
+          <span>{activityText || "仍在处理…"}</span>
+        </div>
+      )}
 
       {hasHeal && (
         <div className="mt-[9px] rounded-[10px] border border-border overflow-hidden bg-[#12161d]">

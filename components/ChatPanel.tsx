@@ -5,6 +5,7 @@ import { MessageCircle } from "lucide-react";
 import AiBubble from "./AiBubble";
 import Composer from "./Composer";
 import type { Message, SendAttachment, UserMessageAttachment } from "@/lib/types";
+import { useConversationStore } from "@/lib/conversationStore";
 
 const QUICK = [
   { label: "一个待办列表", prompt: "做一个待办列表" },
@@ -51,19 +52,16 @@ function UserAttachments({ attachments }: { attachments: UserMessageAttachment[]
 
 export default function ChatPanel({
   messages,
-  busy,
-  curAiId,
   projectId,
   onSend,
   onStop,
 }: {
   messages: Message[];
-  busy: boolean;
-  curAiId: string;
   projectId?: string;
   onSend: (text: string, attachments?: SendAttachment[]) => void;
   onStop: () => void;
 }) {
+  const busy = useConversationStore((state) => state.busy);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -102,7 +100,7 @@ export default function ChatPanel({
           ) : (
             <div key={m.id} className="flex max-w-full">
               <div className="min-w-0 max-w-[min(88%,760px)] rounded-2xl rounded-tl-md border border-border bg-panel2/88 px-3.5 py-2.5 text-[13.5px] leading-[1.65] text-fg shadow-[0_10px_28px_rgba(0,0,0,0.12)]">
-                <AiBubble m={m} busy={busy && m.id === curAiId} />
+                <AiBubble m={m} />
               </div>
             </div>
           )

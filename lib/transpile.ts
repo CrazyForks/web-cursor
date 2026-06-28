@@ -9,6 +9,7 @@
 "use client";
 
 import * as esbuild from "esbuild-wasm";
+import { formatProjectContractErrors, validateReactProjectContract } from "@/lib/projectContract";
 
 type EsbuildGlobal = typeof globalThis & {
   __webCursorEsbuildInitPromise?: Promise<void>;
@@ -51,11 +52,7 @@ export type CompiledProject = {
   entryPath: string;
   js: string;
   css: string;
-};
-
-const DEFAULT_DEPENDENCIES: Record<string, string> = {
-  react: "18.3.1",
-  "react-dom": "18.3.1",
+  importMap: { imports: Record<string, string> };
 };
 
 const SCRIPT_EXTENSIONS = ["", ".tsx", ".ts", ".jsx", ".js", "/index.tsx", "/index.ts", "/index.jsx", "/index.js"];
@@ -99,19 +96,27 @@ function resolveLocalPath(files: Map<string, string>, importer: string, specifie
 }
 
 function parsePackageDependencies(content: string | undefined): Record<string, string> {
-  if (!content) return DEFAULT_DEPENDENCIES;
+  if (!content) {
+    throw new TranspileError([{ text: "找不到 package.json：依赖必须通过 package.json dependencies 声明并映射到 esm.sh CDN", location: null }]);
+  }
   try {
     const pkg = JSON.parse(content) as {
       dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
     };
-    return {
-      ...DEFAULT_DEPENDENCIES,
-      ...(pkg.dependencies ?? {}),
-      ...(pkg.devDependencies ?? {}),
-    };
-  } catch {
+    if (!pkg.dependencies || typeof pkg.dependencies !== "object" || Array.isArray(pkg.dependencies)) {
+      throw new TranspileError([{ text: "package.json 必须声明 dependencies 对象，浏览器会用它解析 esm.sh CDN 依赖", location: null }]);
+    }
+    return pkg.dependencies;
+  } catch (error) {
+    if (error instanceof TranspileError) throw error;
     throw new TranspileError([{ text: "package.json 不是合法 JSON", location: null }]);
+  }
+}
+
+function assertProjectContract(files: TranspileProjectFile[]) {
+  const result = validateReactProjectContract(files);
+  if (!result.ok) {
+    throw new TranspileError([{ text: formatProjectContractErrors(result.errors), location: null }]);
   }
 }
 
@@ -130,6 +135,30 @@ function esmUrl(specifier: string, deps: Record<string, string>): string | null 
   const version = cleanVersion(deps[name]);
   if (!version) return null;
   return `https://esm.sh/${name}@${version}${specifier.slice(name.length)}`;
+}
+
+function isReactRuntimeImport(specifier: string): boolean {
+  return specifier === "react"
+    || specifier.startsWith("react/")
+    || specifier === "react-dom"
+    || specifier.startsWith("react-dom/");
+}
+
+function reactRuntimeImportMap(deps: Record<string, string>): CompiledProject["importMap"] {
+  const reactVersion = cleanVersion(deps.react);
+  const reactDomVersion = cleanVersion(deps["react-dom"]);
+  if (!reactVersion || !reactDomVersion) {
+    throw new TranspileError([{ text: "React 运行时依赖必须在 package.json dependencies 声明 react 和 react-dom 版本", location: null }]);
+  }
+
+  return {
+    imports: {
+      react: `https://esm.sh/react@${reactVersion}`,
+      "react/": `https://esm.sh/react@${reactVersion}/`,
+      "react-dom": `https://esm.sh/react-dom@${reactDomVersion}`,
+      "react-dom/": `https://esm.sh/react-dom@${reactDomVersion}/`,
+    },
+  };
 }
 
 function entryFromHtml(html: string): string | null {
@@ -189,6 +218,7 @@ export async function transpile(code: string): Promise<string> {
 }
 
 export async function compileProject(files: TranspileProjectFile[]): Promise<CompiledProject> {
+  assertProjectContract(files);
   await ensureInit();
 
   const fileMap = new Map(files.map((file) => [normalizePath(file.path), file.content]));
@@ -231,6 +261,10 @@ export async function compileProject(files: TranspileProjectFile[]): Promise<Com
                 return { errors: [{ text: `暂不支持从 npm 包导入 CSS：${args.path}` }] };
               }
 
+              if (isReactRuntimeImport(args.path)) {
+                return { path: args.path, external: true };
+              }
+
               const url = esmUrl(args.path, dependencies);
               if (!url) {
                 return { errors: [{ text: `依赖未在 package.json 声明：${packageName(args.path)}` }] };
@@ -254,6 +288,7 @@ export async function compileProject(files: TranspileProjectFile[]): Promise<Com
       entryPath: entry,
       js: result.outputFiles.find((file) => file.path.endsWith(".js"))?.text ?? "",
       css: result.outputFiles.filter((file) => file.path.endsWith(".css")).map((file) => file.text).join("\n"),
+      importMap: reactRuntimeImportMap(dependencies),
     };
   } catch (e: any) {
     throw toTranspileError(e);

@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 父窗口 postMessage {type:'RUN', project:{js,css}}（项目编译产物）
+ * [INPUT]: 父窗口 postMessage {type:'RUN', project:{js,css,importMap}}（项目编译产物）
  * [OUTPUT]: 向父窗口 postMessage RENDER_OK / RUNTIME_ERROR / CONSOLE / SANDBOX_READY
  * [POS]: C 域沙箱内容 —— 执行不可信 AI 代码 + 把结果回传，是自我修复闭环的接缝
  * [PROTOCOL]: 这是 iframe 的 srcdoc，纯静态脚本（无 AI 代码内联）；改回传协议要同步 controller.ts
@@ -22,12 +22,13 @@ export const RUNNER_HTML = `<!doctype html>
 </head>
 <body>
 <div id="root"></div>
-<script type="module">
+<script>
 const post = (m) => parent.postMessage(m, "*");
 
 // 当前这一轮是否已报错（防止报错后又误发 RENDER_OK）
 let runFailed = false;
 let currentRunId = 0;
+let activeImportMapKey = "";
 function fail(message, stack) {
   runFailed = true;
   post({ type: "RUNTIME_ERROR", message: String(message || "未知错误"), stack: String(stack || "") });
@@ -59,6 +60,28 @@ function resetRoot() {
   else document.body.prepend(nextRoot);
 }
 
+function resetModuleTags() {
+  document.querySelectorAll("script[data-project-module]").forEach((node) => node.remove());
+}
+
+function ensureImportMap(importMap) {
+  const normalizedImportMap = importMap || { imports: {} };
+  const nextKey = JSON.stringify(normalizedImportMap);
+  if (activeImportMapKey === nextKey) return true;
+  if (activeImportMapKey) {
+    fail("运行时依赖版本已变化，需要刷新沙箱后重试", "");
+    return false;
+  }
+
+  const script = document.createElement("script");
+  script.type = "importmap";
+  script.dataset.projectImportmap = "true";
+  script.textContent = nextKey;
+  document.head.appendChild(script);
+  activeImportMapKey = nextKey;
+  return true;
+}
+
 window.addEventListener("message", async (e) => {
   const d = e.data;
   if (!d || d.type !== "RUN") return;
@@ -67,15 +90,26 @@ window.addEventListener("message", async (e) => {
   try {
     const project = d.project || {};
     document.getElementById("project-css").textContent = String(project.css || "");
+    resetModuleTags();
+    if (!ensureImportMap(project.importMap)) return;
     resetRoot();
 
     const blob = new Blob([String(project.js || "")], { type: "text/javascript" });
     const url = URL.createObjectURL(blob);
-    try { await import(url); } finally { URL.revokeObjectURL(url); }
-
-    // 渲染后两帧无错 → 判定 RENDER_OK
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => { if (runId === currentRunId && !runFailed) post({ type: "RENDER_OK" }); }));
+    const script = document.createElement("script");
+    script.type = "module";
+    script.src = url;
+    script.dataset.projectModule = "true";
+    script.onload = () => {
+      URL.revokeObjectURL(url);
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => { if (runId === currentRunId && !runFailed) post({ type: "RENDER_OK" }); }));
+    };
+    script.onerror = () => {
+      URL.revokeObjectURL(url);
+      fail("加载项目模块失败", "");
+    };
+    document.body.appendChild(script);
   } catch (err) {
     fail(err && err.message ? err.message : err, err && err.stack);
   }

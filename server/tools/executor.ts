@@ -23,6 +23,7 @@ import {
   ReadFileArgsSchema,
   RenameFileArgsSchema,
   ReplyArgsSchema,
+  RunPreviewArgsSchema,
   WriteFileArgsSchema,
 } from "@/types/toolSchema";
 import { ToolName, type ToolCallMeta, type ToolName as ToolNameType } from "@/types/tool";
@@ -113,6 +114,10 @@ export async function executeToolCall(
         const args = RenameFileArgsSchema.parse(parseArgs(toolCall.arguments));
         const file = await renameProjectFile(ctx.projectId, args.oldPath, args.newPath);
         return { status: "ok", tool, oldPath: args.oldPath, newPath: file.path, updatedAt: file.updatedAt };
+      }
+      case ToolName.RunPreview: {
+        RunPreviewArgsSchema.parse(parseArgs(toolCall.arguments));
+        return errorResult(tool, ToolExecutionErrorCode.Unsupported, "run_preview must be executed by the browser client.");
       }
       case ToolName.InspectAttachment: {
         const args = InspectAttachmentArgsSchema.parse(parseArgs(toolCall.arguments));

@@ -5,6 +5,7 @@ export const ToolName = {
   WriteFile: "write_file",
   DeleteFile: "delete_file",
   RenameFile: "rename_file",
+  RunPreview: "run_preview",
   InspectAttachment: "inspect_attachment",
 } as const;
 

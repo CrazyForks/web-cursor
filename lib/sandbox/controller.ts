@@ -7,6 +7,7 @@
 "use client";
 
 import type { CompiledProject } from "@/lib/transpile";
+import { RUNNER_HTML } from "@/lib/sandbox/runner";
 
 export type SandboxResult =
   | { type: "RENDER_OK" }
@@ -22,6 +23,8 @@ const RUN_TIMEOUT_MS = 30000; // 首次加载 esm.sh 依赖可能较慢；超时
 export class SandboxController {
   private iframe: HTMLIFrameElement;
   private ready = false;
+  private runnerLoaded = false;
+  private importMapKey: string | null = null;
   private readyWaiters: (() => void)[] = [];
   private pending: ((r: SandboxResult) => void) | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -74,9 +77,32 @@ export class SandboxController {
     return new Promise((res) => this.readyWaiters.push(res));
   }
 
+  private reloadRunner() {
+    this.ready = false;
+    this.runnerLoaded = true;
+    this.readyWaiters = [];
+    this.iframe.srcdoc = RUNNER_HTML;
+  }
+
+  private shouldReloadRunner(project: CompiledProject) {
+    const nextImportMapKey = JSON.stringify(project.importMap ?? { imports: {} });
+    if (!this.runnerLoaded) {
+      this.importMapKey = nextImportMapKey;
+      return true;
+    }
+    if (this.importMapKey !== nextImportMapKey) {
+      this.importMapKey = nextImportMapKey;
+      return true;
+    }
+    return false;
+  }
+
   /** 注入项目编译产物执行，等沙箱回 RENDER_OK / RUNTIME_ERROR / 超时 */
   async run(project: CompiledProject): Promise<SandboxResult> {
-    await this.whenReady();
+    if (this.shouldReloadRunner(project)) {
+      this.reloadRunner();
+      await this.whenReady();
+    }
     return new Promise<SandboxResult>((resolve) => {
       this.pending = resolve;
       this.timer = setTimeout(() => {

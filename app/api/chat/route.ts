@@ -102,8 +102,14 @@ const FILE_MUTATION_TOOLS = [
   ToolName.RenameFile,
 ] as const;
 
+const CLIENT_EXECUTION_TOOLS = [ToolName.RunPreview] as const;
+
 function toolChangesFiles(name: string) {
   return FILE_MUTATION_TOOLS.includes(name as (typeof FILE_MUTATION_TOOLS)[number]);
+}
+
+function toolRunsOnClient(name: string) {
+  return CLIENT_EXECUTION_TOOLS.includes(name as (typeof CLIENT_EXECUTION_TOOLS)[number]);
 }
 
 function fileChangedEvent(
@@ -192,6 +198,16 @@ async function runAgentLoop({
     };
 
     for (const toolCall of assistant.toolCalls) {
+      if (toolRunsOnClient(toolCall.name)) {
+        send({
+          type: ChatEventType.ToolsCall,
+          index: 0,
+          id: toolCall.id,
+          name: toolCall.name,
+        });
+        return;
+      }
+
       const result = await executeToolCall(toolCall, ctx);
       await appendMessage(conversationId, {
         role: "tool",
@@ -248,6 +264,19 @@ function streamAgent(args: {
   }));
 }
 
+function previewFeedbackMessage(result: Extract<ChatTurn, { kind: "preview_feedback" }>["result"]) {
+  if (result.status === "ok") {
+    return `浏览器预览结果：${result.type}${result.durationMs ? `，耗时 ${result.durationMs}ms` : ""}。`;
+  }
+
+  return [
+    `浏览器预览失败：${result.type}`,
+    `错误信息：${result.message}`,
+    result.type === "RUNTIME_ERROR" && result.stack ? `错误堆栈：${result.stack}` : "",
+    "请根据这个真实预览结果继续修复项目文件；不要假设项目已经能运行。",
+  ].filter(Boolean).join("\n");
+}
+
 export async function POST(req: Request) {
   const ownerId = req.headers.get("x-owner-id");
   if (!ownerId) return new Response("Unauthorized", { status: 401 });
@@ -262,6 +291,19 @@ export async function POST(req: Request) {
   if (body.kind === "resume") {
     const projectId = await getOwnedConversationProjectId(body.conversationId, ownerId);
     if (!projectId) return new Response("Not Found", { status: 404 });
+    return streamAgent({ conversationId: body.conversationId, projectId, ownerId, created: false });
+  }
+
+  if (body.kind === "preview_feedback") {
+    const projectId = await getOwnedConversationProjectId(body.conversationId, ownerId);
+    if (!projectId) return new Response("Not Found", { status: 404 });
+
+    await appendMessage(body.conversationId, {
+      role: "user",
+      content: previewFeedbackMessage(body.result),
+      meta: { previewResult: body.result },
+    });
+
     return streamAgent({ conversationId: body.conversationId, projectId, ownerId, created: false });
   }
 

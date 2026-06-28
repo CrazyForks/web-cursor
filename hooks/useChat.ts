@@ -9,13 +9,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { req } from "@/lib/api";
 import { buildExportHtml } from "@/lib/export";
+import {
+  formatProjectContractErrors,
+  REQUIRED_REACT_PROJECT_FILES,
+  validateReactProjectContract,
+} from "@/lib/projectContract";
+import { preloadImportMap } from "@/lib/modulePreload";
 import { SandboxController } from "@/lib/sandbox/controller";
 import { compileProject, TranspileError, type TranspileProjectFile } from "@/lib/transpile";
-import { streamChat } from "@/lib/chatClient";
+import { postToolResult, streamChat } from "@/lib/chatClient";
+import { useConversationStore } from "@/lib/conversationStore";
+import { useWorkbenchStore } from "@/lib/workbenchStore";
 import type { AgentFileChange, Message, SendAttachment, Status, Overlay } from "@/lib/types";
 import type { ChatEvent, ChatTurn } from "@/types/chat";
 import { ChatEventType } from "@/types/chat";
-import { ToolName } from "@/types/tool";
+import { ToolName, type ToolResult } from "@/types/tool";
 import { ToolResultType } from "@/types/tool";
 import {
   FileContentAction,
@@ -24,8 +32,8 @@ import {
 } from "@/lib/projectTypes";
 
 const APP_ENTRY_PATH = "src/App.tsx";
-const REQUIRED_PROJECT_FILES = ["package.json", "index.html", "src/main.tsx", APP_ENTRY_PATH] as const;
 const EMPTY_OVERLAY: Overlay = { show: false, message: "", stack: "", showStack: false };
+const MAX_CLIENT_TOOL_RESUMES = 8;
 
 type StoredMessage = {
   id: string;
@@ -60,7 +68,27 @@ function chooseFile(files: ProjectFileSummary[], preferredPath?: string) {
 
 function hasCompleteReactProject(files: Pick<ProjectFileSummary, "path">[]) {
   const paths = new Set(files.map((file) => file.path));
-  return REQUIRED_PROJECT_FILES.every((path) => paths.has(path));
+  return REQUIRED_REACT_PROJECT_FILES.every((path) => paths.has(path));
+}
+
+function previewSucceeded(result: ToolResult | null): boolean {
+  return result?.status === "ok" && result.type === ToolResultType.RenderOk;
+}
+
+function interruptedPreviewResult(message: string): ToolResult {
+  return { status: "error", type: ToolResultType.ToolInterrupted, message };
+}
+
+function showPreview() {
+  useWorkbenchStore.getState().setViewMode("preview");
+}
+
+function setAgentActivity(text: string) {
+  useConversationStore.getState().setActivity(text);
+}
+
+function finishAgentTurn() {
+  useConversationStore.getState().finishTurn();
 }
 
 export function useChat() {
@@ -226,34 +254,40 @@ export function useChat() {
   );
 
   const runPreview = useCallback(
-    async (projectId = projectIdRef.current) => {
-      if (!projectId) return false;
+    async (projectId = projectIdRef.current): Promise<ToolResult | null> => {
+      if (!projectId) return null;
       let projectFiles: TranspileProjectFile[];
       try {
         projectFiles = await readProjectFiles(projectId);
       } catch {
         setStatus({ kind: "err", text: "读取预览文件失败" });
         setPreviewActive(false);
-        return false;
+        showPreview();
+        return { status: "error", type: ToolResultType.CompileError, message: "读取预览文件失败" };
       }
 
-      if (!hasCompleteReactProject(projectFiles)) {
+      const contract = validateReactProjectContract(projectFiles);
+      if (!contract.ok) {
+        const message = formatProjectContractErrors(contract.errors);
         setPreviewActive(false);
         setHasResult(false);
         setOverlay(EMPTY_OVERLAY);
         setStatus({ kind: "", text: "生成完整 React 项目后可预览" });
-        return false;
+        showPreview();
+        return { status: "error", type: ToolResultType.CompileError, message };
       }
 
       setPreviewActive(true);
       setStatus({ kind: "load", text: "编译项目中…（esbuild-wasm）" });
       try {
         const compiled = await compileProject(projectFiles);
+        preloadImportMap(compiled.importMap);
         setStatus({ kind: "load", text: "执行中…" });
         const sandbox = await waitForSandbox();
         if (!sandbox) {
           setStatus({ kind: "", text: `${compiled.entryPath} 已编译，等待预览挂载` });
-          return false;
+          showPreview();
+          return interruptedPreviewResult("浏览器沙箱尚未挂载，无法运行预览。");
         }
         const t0 = performance.now();
         const result = await sandbox.run(compiled);
@@ -263,24 +297,33 @@ export function useChat() {
           setStatus({ kind: "ok", text: "渲染成功", meta: `· ${dur}ms` });
           setOverlay((o) => ({ ...o, show: false }));
           setHasResult(true);
-          return true;
+          showPreview();
+          return { status: "ok", type: ToolResultType.RenderOk, durationMs: dur };
         }
 
         if (result) {
           setStatus({ kind: "err", text: "运行报错" });
           setOverlay({ show: true, message: result.message, stack: result.stack, showStack: false });
-          return false;
+          showPreview();
+          return {
+            status: "error",
+            type: ToolResultType.RuntimeError,
+            message: result.message,
+            stack: result.stack,
+          };
         }
 
         setStatus({ kind: "", text: `${compiled.entryPath} 已加载` });
-        return false;
+        showPreview();
+        return interruptedPreviewResult("预览没有返回明确的运行结果。");
       } catch (error) {
         const message = error instanceof TranspileError
           ? error.failures.map((failure) => failure.text).join("; ")
           : String(error instanceof Error ? error.message : error);
         setStatus({ kind: "err", text: "编译报错" });
         setOverlay({ show: true, message: "编译错误：" + message, stack: "", showStack: false });
-        return false;
+        showPreview();
+        return { status: "error", type: ToolResultType.CompileError, message };
       }
     },
     [readProjectFiles, waitForSandbox]
@@ -301,6 +344,7 @@ export function useChat() {
     setWriting(false);
     setSaving(false);
     setBusy(false);
+    finishAgentTurn();
     setHasResult(false);
     setPreviewActive(false);
     setOverlay(EMPTY_OVERLAY);
@@ -321,6 +365,7 @@ export function useChat() {
       setWriting(false);
       setSaving(false);
       setBusy(false);
+      finishAgentTurn();
       setDirty(false);
       setOverlay(EMPTY_OVERLAY);
 
@@ -356,28 +401,31 @@ export function useChat() {
 
   const refreshAfterFilesChanged = useCallback(async () => {
     const projectId = projectIdRef.current;
-    if (!projectId) return false;
+    if (!projectId) return null;
     await loadFiles(projectId, activePathRef.current ?? APP_ENTRY_PATH);
     return runPreview(projectId);
   }, [loadFiles, runPreview]);
 
   const runLoop = useCallback(
     async (firstMessage: string, attachments: SendAttachment[] = []) => {
-      const turn: ChatTurn = {
+      let turn: ChatTurn = {
         kind: "user",
         message: firstMessage,
         projectId: projectIdRef.current,
         conversationId: convIdRef.current,
         attachments: attachments.map((attachment) => ({ id: attachment.id })),
       };
-      let filesChanged = false;
 
       setWriting(true);
       setStatus({ kind: "load", text: "AI 正在修改文件…" });
+      setAgentActivity("AI 正在修改文件…");
 
-      try {
-        for await (const ev of streamChat(turn)) {
-          if (abortRef.current.aborted) return;
+      async function consumeTurn(currentTurn: ChatTurn) {
+        let filesChanged = false;
+        let previewToolCallId: string | null = null;
+
+        for await (const ev of streamChat(currentTurn)) {
+          if (abortRef.current.aborted) return { filesChanged, previewToolCallId, aborted: true };
 
           if (ev.type === ChatEventType.Init) {
             projectIdRef.current = ev.projectId;
@@ -385,26 +433,36 @@ export function useChat() {
             setCurrentProjectId(ev.projectId);
             setCurrentConversationId(ev.conversationId);
           } else if (ev.type === ChatEventType.ToolsCall) {
-            if (ev.name === ToolName.WriteFile || ev.name === ToolName.DeleteFile || ev.name === ToolName.RenameFile) {
+            if (ev.name === ToolName.RunPreview) {
+              previewToolCallId = ev.id;
+              setStatus({ kind: "load", text: "正在运行预览…" });
+              setAgentActivity("正在运行预览…");
+            } else if (ev.name === ToolName.WriteFile || ev.name === ToolName.DeleteFile || ev.name === ToolName.RenameFile) {
               setStatus({ kind: "load", text: "AI 正在写入文件…" });
+              setAgentActivity("AI 正在写入文件…");
             } else if (ev.name === ToolName.ListFiles || ev.name === ToolName.ReadFile) {
               setStatus({ kind: "load", text: "AI 正在读取文件…" });
+              setAgentActivity("AI 正在读取文件…");
             }
           } else if (ev.type === ChatEventType.ToolResult) {
             if (ev.status === "error") {
               setStatus({ kind: "err", text: `${ev.name} 执行失败` });
+              setAgentActivity(`${ev.name} 执行失败，AI 正在处理…`);
             }
           } else if (ev.type === ChatEventType.FilesChanged) {
             filesChanged = true;
             if (ev.path && ev.operation) {
               appendFileChange({ operation: ev.operation, path: ev.path, oldPath: ev.oldPath });
               setStatus({ kind: "load", text: `AI 已更新 ${ev.path}` });
+              setAgentActivity(`AI 已更新 ${ev.path}，继续处理中…`);
               await syncFileChange(ev);
             } else {
               setStatus({ kind: "load", text: "文件已更新，刷新预览…" });
+              setAgentActivity("文件已更新，准备刷新预览…");
             }
           } else if (ev.type === ChatEventType.Chat) {
             updateAi((m) => ({ ...m, chatText: (m.chatText ?? "") + ev.delta }));
+            setAgentActivity("AI 正在回复…");
           } else if (ev.type === ChatEventType.Title) {
             if (ev.projectTitle) setProjName(ev.projectTitle);
             setLastTitleUpdate({ conversationId: ev.conversationId, title: ev.title, projectTitle: ev.projectTitle });
@@ -412,30 +470,81 @@ export function useChat() {
             throw new Error(ev.message);
           }
         }
+
+        return { filesChanged, previewToolCallId, aborted: false };
+      }
+
+      try {
+        for (let resumeCount = 0; resumeCount < MAX_CLIENT_TOOL_RESUMES; resumeCount++) {
+          const result = await consumeTurn(turn);
+          if (result.aborted) return;
+
+          if (!result.previewToolCallId) {
+            if (result.filesChanged) {
+              const preview = await refreshAfterFilesChanged();
+              const conversationId = convIdRef.current;
+              if (!previewSucceeded(preview) && conversationId) {
+                setStatus({ kind: "load", text: "AI 正在根据预览错误修复…" });
+                setAgentActivity("AI 正在根据预览错误修复…");
+                turn = {
+                  kind: "preview_feedback",
+                  conversationId,
+                  result: preview ?? interruptedPreviewResult("预览没有返回结果。"),
+                };
+                continue;
+              }
+
+              updateAi((m) => ({
+                ...m,
+                summaryKind: previewSucceeded(preview) ? "ok" : "fail",
+                summary: previewSucceeded(preview) ? "已更新文件并渲染成功" : "已更新文件，但预览需要处理",
+              }));
+            } else {
+              setStatus({ kind: "", text: "等待你的回复" });
+            }
+            setWriting(false);
+            setBusy(false);
+            finishAgentTurn();
+            return;
+          }
+
+          const conversationId = convIdRef.current;
+          const projectId = projectIdRef.current;
+          if (!conversationId || !projectId) {
+            throw new Error("缺少会话或项目信息，无法写入预览结果。");
+          }
+
+          if (result.filesChanged) {
+            await loadFiles(projectId, activePathRef.current ?? APP_ENTRY_PATH);
+          }
+
+          const preview = await runPreview(projectId);
+          await postToolResult(
+            conversationId,
+            result.previewToolCallId,
+            preview ?? interruptedPreviewResult("预览没有返回结果。")
+          );
+
+          setStatus({
+            kind: "load",
+            text: previewSucceeded(preview) ? "预览通过，AI 正在总结…" : "AI 正在根据预览错误修复…",
+          });
+          setAgentActivity(previewSucceeded(preview) ? "预览通过，AI 正在总结…" : "AI 正在根据预览错误修复…");
+          turn = { kind: "resume", conversationId };
+        }
+
+        throw new Error(`浏览器工具续写超过上限 ${MAX_CLIENT_TOOL_RESUMES} 轮，已停止。`);
       } catch (error) {
         setWriting(false);
         setStatus({ kind: "err", text: "请求失败", meta: "" });
         setOverlay({ show: true, message: String(error instanceof Error ? error.message : error), stack: "", showStack: false });
         updateAi((m) => ({ ...m, summaryKind: "fail", summary: "调用后端失败" }));
         setBusy(false);
+        finishAgentTurn();
         return;
       }
-
-      setWriting(false);
-
-      if (filesChanged) {
-        const ok = await refreshAfterFilesChanged();
-        updateAi((m) => ({
-          ...m,
-          summaryKind: ok ? "ok" : "fail",
-          summary: ok ? "已更新文件并渲染成功" : "已更新文件，但预览需要处理",
-        }));
-      } else {
-        setStatus({ kind: "", text: "等待你的回复" });
-      }
-      setBusy(false);
     },
-    [appendFileChange, refreshAfterFilesChanged, syncFileChange, updateAi]
+    [appendFileChange, loadFiles, refreshAfterFilesChanged, runPreview, syncFileChange, updateAi]
   );
 
   const send = useCallback(
@@ -467,12 +576,14 @@ export function useChat() {
         { id: aiId, role: "ai", attempts: [], fileChanges: [] },
       ]);
       setBusy(true);
+      useConversationStore.getState().startTurn(aiId);
       setOverlay(EMPTY_OVERLAY);
       abortRef.current = { aborted: false };
 
       runLoop(messageText, attachments).catch((err) => {
         setBusy(false);
         setWriting(false);
+        finishAgentTurn();
         setStatus({ kind: "err", text: "内部错误", meta: "" });
         setOverlay({ show: true, message: String(err?.message ?? err), stack: String(err?.stack ?? ""), showStack: false });
       });
@@ -572,6 +683,7 @@ export function useChat() {
     abortRef.current.aborted = true;
     setBusy(false);
     setWriting(false);
+    useConversationStore.getState().stopTurn();
     setStatus({ kind: "", text: "已停止" });
   }, []);
 

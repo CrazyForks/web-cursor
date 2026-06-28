@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ChatAttachmentRefSchema } from "./attachment";
+import { ToolResultSchema } from "./toolSchema";
 import type { ToolName } from "./tool";
 
 export const ChatTurnSchema = z.discriminatedUnion("kind", [
@@ -13,6 +14,11 @@ export const ChatTurnSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("resume"),
     conversationId: z.string().uuid(),
+  }),
+  z.object({
+    kind: z.literal("preview_feedback"),
+    conversationId: z.string().uuid(),
+    result: ToolResultSchema,
   }),
 ]);
 

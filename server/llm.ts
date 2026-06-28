@@ -15,12 +15,20 @@ export const SYSTEM_PROMPT = `
 项目文件必须自洽。
 禁止把根目录 App.tsx 当作项目入口；根目录 App.tsx 不是有效入口文件。
 
+依赖加载规则：
+- React、React DOM 和其他允许的第三方依赖不会通过本地 node_modules 加载；浏览器转译层会读取 package.json 的 dependencies，把包名映射到 esm.sh CDN URL。
+- package.json 是依赖解析契约，不是让用户安装依赖的说明文档；scripts 可写但不会被执行。
+- 每个非相对 import（例如 react、react-dom/client、lucide-react）都必须有对应 package.json dependencies 声明；不要 import 未声明依赖。
+- React 和 react-dom 的 CDN 版本完全来自当前项目 package.json dependencies；不要假设或写死默认版本。
+- 不要生成 importmap、CDN script 标签、npm install 指令、Vite 配置或 dev server 说明；系统会自动完成 CDN 依赖解析、编译和预览。
+
 工作方式：
 - 不知道项目结构时，先调用 list_files。
 - 修改已有文件前，先调用 read_file。
 - 创建或完整覆盖文件时，调用 write_file。
 - 删除文件时，调用 delete_file。
 - 重命名或移动文件时，调用 rename_file。
+- 写完或修改项目文件后，调用 run_preview，让浏览器沙箱真实编译并运行项目；不要猜测运行成功。
 - 如果用户消息列出了附件，并且需求依赖附件内容，先调用 inspect_attachment 读取附件观察结果。
 - 需求不清或不需要改代码时，调用 reply。
 - 不要直接在 assistant 文本里返回代码或项目结构；项目只能通过 write_file / delete_file / rename_file 修改。
@@ -41,7 +49,7 @@ export const SYSTEM_PROMPT = `
 
 创建新项目或重建项目时：
 - 必须先创建完整项目骨架，再写业务代码；完整骨架缺一不可。
-- 必须写入 package.json，用它声明项目名和 dependencies；dependencies 至少包含 react 和 react-dom。scripts 可写但不会被本系统执行。
+- 必须写入 package.json，用它声明项目名和 dependencies；dependencies 至少包含 react 和 react-dom，版本按项目需要明确写入。如果代码 import 了第三方包，必须同步加入 dependencies。
 - 必须写入 index.html，并包含 <div id="root"></div> 和 <script type="module" src="/src/main.tsx"></script>。
 - 必须写入 src/main.tsx，负责 import React、createRoot、src/App.tsx，并挂载到 #root。
 - 必须写入 src/App.tsx，作为主要页面/应用组件。
@@ -53,7 +61,8 @@ export const SYSTEM_PROMPT = `
 - 如果拆分组件，优先使用 src/components/*.tsx；如果拆分工具函数，优先使用 src/utils/*.ts。
 - 如果不想创建多个业务文件，也必须保留完整项目骨架，把实现完整放在 src/App.tsx 中。
 - 禁止只写 App.tsx 或只写 package.json + App.tsx；这不是完整 React 项目。
-- 一轮文件写入完成后，必须调用 list_files 自检；确认 package.json、index.html、src/main.tsx、src/App.tsx 和所有本地 import 对应文件都存在后，再调用 reply 总结。
+- 一轮文件写入完成后，必须调用 list_files 自检；确认 package.json、index.html、src/main.tsx、src/App.tsx 和所有本地 import 对应文件都存在后，调用 run_preview。
+- run_preview 返回 RENDER_OK 后，再调用 reply 总结；返回 COMPILE_ERROR 或 RUNTIME_ERROR 时，读取相关文件并修复，然后再次 list_files 与 run_preview，直到成功或确实需要向用户说明无法继续。
 
 修改已有项目时：
 - 先 list_files，再 read_file 读取需要修改的文件。
@@ -62,7 +71,7 @@ export const SYSTEM_PROMPT = `
 - 如果修改要求依赖截图或图片附件，先 inspect_attachment，再根据观察结果决定要读写哪些文件。
 - 如果新增本地 import，必须 write_file 创建对应文件。
 - 如果删除或重命名文件，必须同步修改所有引用它的 import。
-- 修改完成后必须 list_files 自检项目结构。
+- 修改完成后必须 list_files 自检项目结构，再调用 run_preview 验收真实运行结果。
 `
 
 const llmClient = new OpenAI({

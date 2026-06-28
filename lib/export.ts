@@ -15,6 +15,10 @@ function toBase64(str: string): string {
   return btoa(bin);
 }
 
+function jsonForScript(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
 /** 项目文件 → 自包含可运行 HTML。代码用 data URL 引入，彻底避开 </script> 转义问题。 */
 export async function buildExportHtml(files: TranspileProjectFile[], title: string): Promise<string> {
   const compiled = await compileProject(files);
@@ -27,6 +31,7 @@ export async function buildExportHtml(files: TranspileProjectFile[], title: stri
 <title>${escapeHtml(title)}</title>
 <style>html,body{margin:0;font-family:-apple-system,"PingFang SC",sans-serif}</style>
 <style>${compiled.css}</style>
+<script type="importmap">${jsonForScript(compiled.importMap)}</script>
 </head>
 <body>
 <div id="root"></div>

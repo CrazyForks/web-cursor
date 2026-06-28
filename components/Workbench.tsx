@@ -13,7 +13,8 @@ import { req } from "@/lib/api";
 import { useChat } from "@/hooks/useChat";
 import type { ProjectDetail, StoredMessage } from "@/lib/projectTypes";
 import { formatTime } from "@/lib/projectTypes";
-import TopBar, { type WorkbenchViewMode } from "@/components/TopBar";
+import { useWorkbenchStore } from "@/lib/workbenchStore";
+import TopBar from "@/components/TopBar";
 import ChatPanel from "@/components/ChatPanel";
 import EditorPanel from "@/components/EditorPanel";
 import PreviewPanel from "@/components/PreviewPanel";
@@ -92,7 +93,8 @@ export default function Workbench({ projectId }: { projectId?: string }) {
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [loadingProject, setLoadingProject] = useState(!!projectId);
   const [loadingConversationId, setLoadingConversationId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<WorkbenchViewMode>("code");
+  const viewMode = useWorkbenchStore((state) => state.viewMode);
+  const setViewMode = useWorkbenchStore((state) => state.setViewMode);
   const initialConversationIdRef = useRef<string | null>(null);
   const initialPreviewProjectIdRef = useRef<string | null>(null);
 
@@ -278,8 +280,6 @@ export default function Workbench({ projectId }: { projectId?: string }) {
               <div className="min-h-0 flex-1">
                 <ChatPanel
                   messages={s.messages}
-                  busy={s.busy}
-                  curAiId={s.curAiId.current}
                   projectId={s.currentProjectId}
                   onSend={s.send}
                   onStop={s.stop}
@@ -290,8 +290,6 @@ export default function Workbench({ projectId }: { projectId?: string }) {
             <div className="h-full w-[340px] flex-none border-r border-border bg-panel">
               <ChatPanel
                 messages={s.messages}
-                busy={s.busy}
-                curAiId={s.curAiId.current}
                 projectId={s.currentProjectId}
                 onSend={s.send}
                 onStop={s.stop}

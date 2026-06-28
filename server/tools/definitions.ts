@@ -87,6 +87,17 @@ export const toolDefinitions = [
     },
   },
   {
+    name: ToolName.RunPreview,
+    description:
+      "在浏览器沙箱中编译并运行当前项目，返回 RENDER_OK、COMPILE_ERROR 或 RUNTIME_ERROR。写完文件后必须用它验收真实运行结果。",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
     name: ToolName.InspectAttachment,
     description:
       "识别用户在当前会话中上传的附件内容。工具只返回附件中可见事实；后续如何使用由 agent 决定。只能读取后端在上下文中列出的 attachmentId。",

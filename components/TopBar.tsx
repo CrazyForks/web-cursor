@@ -1,13 +1,13 @@
 "use client";
 
+import type { WorkbenchViewMode } from "@/lib/workbenchStore";
+
 const btn =
   "px-3 py-1.5 rounded-md text-[13px] inline-flex items-center gap-1.5 border transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 const btnGhost = `${btn} bg-panel2 border-border text-fg hover:border-accent hover:bg-[#222b39]`;
 const btnPrimary = `${btn} bg-accent border-accent text-[#04101f] font-semibold hover:bg-[#79b8ff]`;
 const modeBtn =
   "h-8 rounded-full px-4 text-[13px] font-semibold transition-colors";
-
-export type WorkbenchViewMode = "preview" | "code";
 
 export default function TopBar({
   projName,
