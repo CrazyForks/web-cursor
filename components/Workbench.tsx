@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Loader2, MessageSquare, Plus } from "lucide-react";
 import { req } from "@/lib/api";
 import { useChat } from "@/hooks/useChat";
 import type { ProjectDetail, StoredMessage } from "@/lib/projectTypes";
@@ -225,8 +226,12 @@ export default function Workbench({ projectId }: { projectId?: string }) {
             <div className="flex h-full w-[380px] flex-none flex-col border-r border-border bg-panel">
               <div className="h-9 flex-none flex items-center justify-between gap-2 px-[14px] border-b border-border text-[12px] text-muted uppercase tracking-[0.06em]">
                 <span>对话线索</span>
-                <button className="rounded-md border border-border bg-panel2 px-2 py-1 text-[12px] text-accent hover:border-accent" onClick={newConversation}>
-                  ＋ 新会话
+                <button
+                  className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border bg-panel2 px-2.5 text-[12px] text-accent transition hover:border-accent hover:bg-[#1f2a3a]"
+                  onClick={newConversation}
+                >
+                  <Plus size={14} strokeWidth={2} />
+                  新会话
                 </button>
               </div>
               <div className="max-h-[160px] flex-none overflow-y-auto border-b border-border p-2">
@@ -248,7 +253,18 @@ export default function Workbench({ projectId }: { projectId?: string }) {
                           }
                           onClick={() => openConversation(conversation.id)}
                         >
-                          <span className={active ? "text-accent" : "text-muted"}>{loading ? "…" : "💬"}</span>
+                          <span
+                            className={
+                              "inline-flex h-6 w-6 flex-none items-center justify-center rounded-md " +
+                              (active ? "text-accent" : "text-muted")
+                            }
+                          >
+                            {loading ? (
+                              <Loader2 size={14} className="animate-spin" strokeWidth={2} />
+                            ) : (
+                              <MessageSquare size={14} strokeWidth={1.9} />
+                            )}
+                          </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-[13px] text-fg">{conversation.title || "未命名会话"}</span>
                             <span className="block text-[11px] text-muted">{formatTime(conversation.createdAt)}</span>

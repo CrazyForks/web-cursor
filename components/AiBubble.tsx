@@ -1,6 +1,7 @@
 "use client";
 
 import Spinner from "./Spinner";
+import MarkdownMessage from "./MarkdownMessage";
 import { PHASE_LABEL, type Message } from "@/lib/types";
 
 type AiMsg = Extract<Message, { role: "ai" }>;
@@ -22,7 +23,11 @@ export default function AiBubble({ m, busy }: { m: AiMsg; busy: boolean }) {
   return (
     <>
       {/* AI 直接回话/提问（reply 分支） */}
-      {m.chatText && <div className="whitespace-pre-wrap">{m.chatText}</div>}
+      {m.chatText && (
+        <div className="markdown-message">
+          <MarkdownMessage content={m.chatText} />
+        </div>
+      )}
 
       {m.attempts.length === 0 && busy && !m.chatText && (
         <span>

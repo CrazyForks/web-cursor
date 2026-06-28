@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { MessageCircle } from "lucide-react";
 import AiBubble from "./AiBubble";
 import Composer from "./Composer";
 import type { Message, SendAttachment, UserMessageAttachment } from "@/lib/types";
@@ -21,17 +22,20 @@ function formatBytes(bytes: number) {
 
 function UserAttachments({ attachments }: { attachments: UserMessageAttachment[] }) {
   return (
-    <div className="mt-2 grid grid-cols-1 gap-2">
+    <div className="mt-2 flex max-w-full flex-wrap gap-2">
       {attachments.map((attachment) => (
-        <div key={attachment.id} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-black/20 p-1.5">
+        <div
+          key={attachment.id}
+          className="flex max-w-[210px] min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-black/20 p-1.5"
+        >
           {attachment.previewUrl ? (
             <img
               src={attachment.previewUrl}
               alt={attachment.name ?? "图片附件"}
-              className="h-11 w-11 flex-none rounded-md object-cover"
+              className="h-10 w-10 flex-none rounded-md object-cover"
             />
           ) : (
-            <div className="flex h-11 w-11 flex-none items-center justify-center rounded-md border border-white/10 text-[11px] text-white/70">
+            <div className="flex h-10 w-10 flex-none items-center justify-center rounded-md border border-white/10 text-[10px] text-white/70">
               IMG
             </div>
           )}
@@ -68,10 +72,10 @@ export default function ChatPanel({
   return (
     <div className="flex flex-col min-w-0 h-full w-full bg-panel">
       <div className="h-9 flex-none flex items-center gap-2 px-[14px] border-b border-border text-[12px] text-muted uppercase tracking-[0.06em]">
-        <span>💬</span> AI 对话 · Agent
+        <MessageCircle size={14} strokeWidth={1.8} /> AI 对话 · Agent
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-[16px_14px] flex flex-col gap-3">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-[18px_16px] flex flex-col gap-4">
         {messages.length === 0 && (
           <div className="text-muted leading-[1.7]">
             <h3 className="text-fg text-[15px] m-0 mb-1.5">👋 描述你想做的 React 界面</h3>
@@ -89,17 +93,15 @@ export default function ChatPanel({
 
         {messages.map((m) =>
           m.role === "user" ? (
-            <div key={m.id} className="flex flex-row-reverse gap-[9px] max-w-full">
-              <div className="w-[26px] h-[26px] rounded-[7px] flex-none flex items-center justify-center text-sm bg-bubble">🧑</div>
-              <div className="px-3 py-[9px] rounded-[11px] rounded-tr-[3px] leading-[1.6] text-[13.5px] break-words bg-bubble text-white">
-                {m.text}
+            <div key={m.id} className="flex max-w-full justify-end">
+              <div className="max-w-[min(76%,680px)] rounded-2xl rounded-tr-md bg-bubble/90 px-3.5 py-2.5 text-[13.5px] leading-[1.65] text-white shadow-[0_8px_22px_rgba(31,111,235,0.16)]">
+                {m.text && <div className="whitespace-pre-wrap break-words">{m.text}</div>}
                 {m.attachments?.length ? <UserAttachments attachments={m.attachments} /> : null}
               </div>
             </div>
           ) : (
-            <div key={m.id} className="flex gap-[9px] max-w-full">
-              <div className="w-[26px] h-[26px] rounded-[7px] flex-none flex items-center justify-center text-sm bg-[#30363d]">🤖</div>
-              <div className="px-3 py-[9px] rounded-[11px] rounded-tl-[3px] leading-[1.6] text-[13.5px] break-words bg-panel2 border border-border min-w-0">
+            <div key={m.id} className="flex max-w-full">
+              <div className="min-w-0 max-w-[min(88%,760px)] rounded-2xl rounded-tl-md border border-border bg-panel2/88 px-3.5 py-2.5 text-[13.5px] leading-[1.65] text-fg shadow-[0_10px_28px_rgba(0,0,0,0.12)]">
                 <AiBubble m={m} busy={busy && m.id === curAiId} />
               </div>
             </div>

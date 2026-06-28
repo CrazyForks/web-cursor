@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { ArrowUp, Paperclip, RefreshCw, Square, X } from "lucide-react";
 import {
   createPendingAttachment,
   uploadPendingAttachment,
@@ -165,11 +166,11 @@ export default function Composer({
   const aggregateError = hasUploadError ? "有图片上传失败，请移除或重试后再发送。" : error;
 
   return (
-    <div className="flex-none border-t border-border p-[12px_14px] bg-panel">
+    <div className="flex-none border-t border-border bg-panel p-[10px_14px]">
       <div
         className={
-          "bg-codebg border rounded-[11px] px-[10px] py-2 transition-colors " +
-          (dragActive ? "border-accent bg-[#111b2b]" : "border-border focus-within:border-accent")
+          "rounded-[22px] border bg-codebg px-3 py-2 shadow-[0_-8px_28px_rgba(0,0,0,0.12)] transition-colors " +
+          (dragActive ? "border-accent bg-[#101a2a]" : "border-border focus-within:border-[#4a90e2]")
         }
         onDragEnter={(e) => {
           e.preventDefault();
@@ -190,9 +191,12 @@ export default function Composer({
         }}
       >
         {attachments.length > 0 && (
-          <div className="mb-2 grid grid-cols-2 gap-2">
+          <div className="mb-2 flex max-w-full flex-wrap gap-2">
             {attachments.map((attachment) => (
-              <div key={attachment.id} className="relative flex min-w-0 items-center gap-2 rounded-lg border border-border bg-panel2/70 p-1.5">
+              <div
+                key={attachment.id}
+                className="relative flex max-w-[230px] min-w-0 items-center gap-2 rounded-xl border border-border bg-panel2/70 p-1.5"
+              >
                 <div className="relative h-10 w-10 flex-none overflow-hidden rounded-md border border-border">
                   <img
                     src={attachment.previewUrl}
@@ -228,20 +232,22 @@ export default function Composer({
                 {attachment.status === "error" && (
                   <button
                     type="button"
-                    className="h-6 flex-none rounded-md border border-border px-1.5 text-[11px] text-accent hover:border-accent"
+                    className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full text-muted transition hover:bg-white/10 hover:text-accent"
                     onClick={() => uploadAttachment(attachment)}
+                    aria-label="重试上传"
+                    title="重试上传"
                   >
-                    重试
+                    <RefreshCw size={13} strokeWidth={2} />
                   </button>
                 )}
                 <button
                   type="button"
-                  className="h-6 w-6 flex-none rounded-md border border-border text-[13px] text-muted hover:border-red hover:text-red"
+                  className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full text-muted transition hover:bg-red/10 hover:text-red"
                   onClick={() => removeAttachment(attachment.id)}
                   aria-label={`移除 ${attachment.name}`}
                   title="移除图片"
                 >
-                  x
+                  <X size={14} strokeWidth={2} />
                 </button>
               </div>
             ))}
@@ -251,7 +257,7 @@ export default function Composer({
         <textarea
           id="chat-composer"
           name="chat-composer"
-          className="w-full bg-transparent border-none outline-none text-fg resize-none text-[13.5px] leading-[1.5] h-[38px]"
+          className="max-h-36 min-h-[40px] w-full resize-none border-none bg-transparent px-1 pt-1 text-[13.5px] leading-[1.55] text-fg outline-none placeholder:text-muted/70"
           placeholder="描述你想要的界面…也可以粘贴或拖入截图"
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -269,8 +275,8 @@ export default function Composer({
         />
         {aggregateError && <div className="mt-1 text-[11px] leading-4 text-red">{aggregateError}</div>}
 
-        <div className="flex items-center justify-between mt-1.5">
-          <div className="flex items-center gap-2">
+        <div className="mt-1.5 flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -284,34 +290,39 @@ export default function Composer({
             />
             <button
               type="button"
-              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-[12px] font-medium text-muted hover:border-accent hover:text-accent disabled:opacity-45"
+              className="inline-flex h-8 w-8 flex-none items-center justify-center rounded-full text-muted transition hover:bg-white/10 hover:text-fg disabled:cursor-not-allowed disabled:opacity-45"
               onClick={() => fileInputRef.current?.click()}
               disabled={busy || attachments.length >= MAX_ATTACHMENTS}
               aria-label="上传截图"
               title="上传 PNG / JPEG / WebP 图片，也支持粘贴或拖拽"
             >
-              <span className="text-[14px] leading-none">+</span>
-              上传截图
+              <Paperclip size={17} strokeWidth={2} />
             </button>
-            <span className="text-[11px] text-[#5a6573]">
+            <span className="truncate text-[11px] text-[#687485]">
               粘贴/拖入图片 · 最多 {MAX_ATTACHMENTS} 张 · 单张 5MB
             </span>
           </div>
 
           {busy ? (
             <button
-              className="bg-transparent border border-red text-red rounded-lg px-3 py-1.5 text-[13px]"
+              className="inline-flex h-8 w-8 flex-none items-center justify-center rounded-full bg-red/15 text-red transition hover:bg-red/25"
               onClick={onStop}
+              type="button"
+              aria-label="停止生成"
+              title="停止生成"
             >
-              停止
+              <Square size={14} fill="currentColor" strokeWidth={2} />
             </button>
           ) : (
             <button
-              className="bg-accent text-[#04101f] rounded-lg px-3.5 py-1.5 font-semibold text-[13px] hover:bg-[#79b8ff] disabled:opacity-45 disabled:cursor-not-allowed"
+              className="inline-flex h-8 w-8 flex-none items-center justify-center rounded-full bg-fg text-bg transition hover:bg-white disabled:cursor-not-allowed disabled:bg-[#2d3744] disabled:text-muted"
               onClick={submit}
               disabled={!canSend}
+              type="button"
+              aria-label={hasUploading ? "上传中" : "发送"}
+              title={hasUploading ? "上传中" : "发送"}
             >
-              {hasUploading ? "上传中…" : "发送"}
+              {hasUploading ? "…" : <ArrowUp size={17} strokeWidth={2.4} />}
             </button>
           )}
         </div>
