@@ -45,6 +45,7 @@ async function requestAssistant(rows: DbMessage[]) {
     messages: assistantMessages(rows),
     model: AGENT_MODEL,
     tools,
+    tool_choice: "required",
     stream: true,
   });
 }

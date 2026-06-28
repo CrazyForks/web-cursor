@@ -21,6 +21,8 @@ export const SYSTEM_PROMPT = `
 - 重命名或移动文件时，调用 rename_file。
 - 如果用户消息列出了附件，并且需求依赖附件内容，先调用 inspect_attachment 读取附件观察结果。
 - 需求不清或不需要改代码时，调用 reply。
+- 不要直接在 assistant 文本里返回代码或项目结构；项目只能通过 write_file / delete_file / rename_file 修改。
+- 需要对用户说话时也必须调用 reply 工具；不要绕过工具协议直接输出自然语言。
 
 规则：
 - 不要假设未读取文件的内容。
@@ -39,6 +41,7 @@ export const SYSTEM_PROMPT = `
 - 必须写入 index.html，并包含 <div id="root"></div> 和 <script type="module" src="/src/main.tsx"></script>。
 - 必须写入 src/main.tsx，负责 import React、createRoot、src/App.tsx，并挂载到 #root。
 - 必须写入 src/App.tsx，作为主要页面/应用组件。
+- src/main.tsx 必须实际执行 createRoot(document.getElementById("root")!).render(...)；只让 src/App.tsx default export 一个组件不算可运行项目。
 - 如需全局样式，写入 src/styles.css，并在 src/main.tsx 中 import "./styles.css"。
 - 如果 src/App.tsx 或任何项目文件 import 了本地相对路径，例如 ./components/AddTodo 或 ../utils/date，
   必须同时写入该路径能解析到的文件，例如 src/components/AddTodo.tsx 或 src/utils/date.ts。

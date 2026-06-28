@@ -7,10 +7,6 @@
 
 import { compileProject, type TranspileProjectFile } from "./transpile";
 
-const REACT = "https://esm.sh/react@18.3.1";
-const REACT_DOM_CLIENT = "https://esm.sh/react-dom@18.3.1/client";
-const JSX_RUNTIME = "https://esm.sh/react@18.3.1/jsx-runtime";
-
 // UTF-8 安全的 base64（中文不会乱码）
 function toBase64(str: string): string {
   const bytes = new TextEncoder().encode(str);
@@ -29,22 +25,12 @@ export async function buildExportHtml(files: TranspileProjectFile[], title: stri
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
-<script type="importmap">
-{"imports":{"react":"${REACT}","react-dom/client":"${REACT_DOM_CLIENT}","react/jsx-runtime":"${JSX_RUNTIME}"}}
-</script>
 <style>html,body{margin:0;font-family:-apple-system,"PingFang SC",sans-serif}</style>
 <style>${compiled.css}</style>
 </head>
 <body>
 <div id="root"></div>
-<script type="module">
-import React from "react";
-import { createRoot } from "react-dom/client";
-const mod = await import("${dataUrl}");
-if (typeof mod.default === "function") {
-  createRoot(document.getElementById("root")).render(React.createElement(mod.default));
-}
-</script>
+<script type="module" src="${dataUrl}"></script>
 </body>
 </html>`;
 }

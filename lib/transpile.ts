@@ -145,6 +145,10 @@ function detectEntry(fileMap: Map<string, string>): string {
     throw new TranspileError([{ text: "找不到 index.html：完整 React 项目必须通过 index.html 声明入口文件", location: null }]);
   }
 
+  if (!/\bid=["']root["']/.test(htmlEntry)) {
+    throw new TranspileError([{ text: "index.html 缺少 <div id=\"root\"></div> 挂载点", location: null }]);
+  }
+
   const entry = entryFromHtml(htmlEntry);
   if (!entry) {
     throw new TranspileError([{ text: "index.html 缺少 <script type=\"module\" src=\"...\"> 入口声明", location: null }]);

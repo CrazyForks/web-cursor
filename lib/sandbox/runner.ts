@@ -9,21 +9,10 @@
  * 上线需进一步独立 origin 部署（见 CLAUDE.md），本地 MVP 先用 sandbox 属性。
  */
 
-const REACT = "https://esm.sh/react@18.3.1";
-const REACT_DOM_CLIENT = "https://esm.sh/react-dom@18.3.1/client";
-const JSX_RUNTIME = "https://esm.sh/react@18.3.1/jsx-runtime";
-
 export const RUNNER_HTML = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<script type="importmap">
-{"imports":{
-  "react":"${REACT}",
-  "react-dom/client":"${REACT_DOM_CLIENT}",
-  "react/jsx-runtime":"${JSX_RUNTIME}"
-}}
-</script>
 <style>
   html,body{margin:0}
   body{font-family:-apple-system,"PingFang SC",sans-serif;padding:0}
@@ -34,13 +23,11 @@ export const RUNNER_HTML = `<!doctype html>
 <body>
 <div id="root"></div>
 <script type="module">
-import React from "react";
-import { createRoot } from "react-dom/client";
-
 const post = (m) => parent.postMessage(m, "*");
 
 // 当前这一轮是否已报错（防止报错后又误发 RENDER_OK）
 let runFailed = false;
+let currentRunId = 0;
 function fail(message, stack) {
   runFailed = true;
   post({ type: "RUNTIME_ERROR", message: String(message || "未知错误"), stack: String(stack || "") });
@@ -64,51 +51,31 @@ window.addEventListener("unhandledrejection", (e) =>
   fail("Unhandled rejection: " + (e.reason && e.reason.message ? e.reason.message : e.reason),
        e.reason && e.reason.stack));
 
-// 错误边界：捕获 React 渲染期错误（如 list.mp is not a function）
-class ErrorBoundary extends React.Component {
-  constructor(p) { super(p); this.state = { err: null }; }
-  static getDerivedStateFromError(err) { return { err }; }
-  componentDidCatch(err) { fail(err && err.message, err && err.stack); }
-  render() {
-    if (this.state.err) {
-      return React.createElement("div",
-        { style: { color: "#b00", fontFamily: "monospace", padding: 16, whiteSpace: "pre-wrap" } },
-        String(this.state.err && this.state.err.message || this.state.err));
-    }
-    return this.props.children;
-  }
+function resetRoot() {
+  const oldRoot = document.getElementById("root");
+  const nextRoot = document.createElement("div");
+  nextRoot.id = "root";
+  if (oldRoot) oldRoot.replaceWith(nextRoot);
+  else document.body.prepend(nextRoot);
 }
-
-let root = null;
 
 window.addEventListener("message", async (e) => {
   const d = e.data;
   if (!d || d.type !== "RUN") return;
+  const runId = ++currentRunId;
   runFailed = false;
   try {
     const project = d.project || {};
     document.getElementById("project-css").textContent = String(project.css || "");
-    if (root) {
-      root.unmount();
-      root = null;
-    }
-    document.getElementById("root").replaceChildren();
+    resetRoot();
 
     const blob = new Blob([String(project.js || "")], { type: "text/javascript" });
     const url = URL.createObjectURL(blob);
-    let mod;
-    try { mod = await import(url); } finally { URL.revokeObjectURL(url); }
-
-    const App = mod.default;
-    if (typeof App === "function") {
-      if (!root) root = createRoot(document.getElementById("root"));
-      // ErrorBoundary 重新挂载：key 变化强制重建，确保上一轮错误状态不残留
-      root.render(React.createElement(ErrorBoundary, { key: Math.random() }, React.createElement(App)));
-    }
+    try { await import(url); } finally { URL.revokeObjectURL(url); }
 
     // 渲染后两帧无错 → 判定 RENDER_OK
     requestAnimationFrame(() =>
-      requestAnimationFrame(() => { if (!runFailed) post({ type: "RENDER_OK" }); }));
+      requestAnimationFrame(() => { if (runId === currentRunId && !runFailed) post({ type: "RENDER_OK" }); }));
   } catch (err) {
     fail(err && err.message ? err.message : err, err && err.stack);
   }
