@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ChatAttachmentRefSchema } from "./attachment";
 import { ToolResultSchema } from "./toolSchema";
+import type { IntegrationCardMeta } from "./integration";
 import type { ToolName } from "./tool";
 
 export const ChatTurnSchema = z.discriminatedUnion("kind", [
@@ -31,6 +32,7 @@ export const ChatEventType = {
   ToolsCall: "tools_call",
   ToolResult: "tool_result",
   FilesChanged: "files_changed",
+  IntegrationCard: "integration_card",
   Title: "title",
   Done: "done",
   Error: "error",
@@ -54,6 +56,7 @@ export type ChatEvent =
   | { type: typeof ChatEventType.Chat; delta: string }
   | { type: typeof ChatEventType.ToolsCall; index: number; name: ToolName | string; id: string }
   | { type: typeof ChatEventType.ToolResult; name: ToolName | string; status: "ok" | "error" }
+  | { type: typeof ChatEventType.IntegrationCard; meta: IntegrationCardMeta }
   | {
       type: typeof ChatEventType.FilesChanged;
       operation?: FileChangeOperation;

@@ -305,6 +305,7 @@ export default function Workbench({ projectId }: { projectId?: string }) {
                   messages={s.messages}
                   projectId={s.currentProjectId}
                   onSend={s.send}
+                  onResume={s.resume}
                   onStop={s.stop}
                 />
               </div>
@@ -315,6 +316,7 @@ export default function Workbench({ projectId }: { projectId?: string }) {
                 messages={s.messages}
                 projectId={s.currentProjectId}
                 onSend={s.send}
+                onResume={s.resume}
                 onStop={s.stop}
               />
             </div>

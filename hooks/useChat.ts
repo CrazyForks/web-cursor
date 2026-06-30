@@ -13,6 +13,7 @@ import type { AgentFileChange, Message, SendAttachment, Status } from "@/lib/typ
 import type { ProjectFileSummary } from "@/lib/projectTypes";
 import type { ChatEvent, ChatTurn } from "@/types/chat";
 import { ChatEventType } from "@/types/chat";
+import { isIntegrationCardMeta } from "@/types/integration";
 import { ToolName, ToolResultType, type ToolResult } from "@/types/tool";
 
 const APP_ENTRY_PATH = "src/App.tsx";
@@ -133,7 +134,13 @@ export function useChat(deps: UseChatDeps) {
         if (row.role === "user") {
           restored.push({ id: row.id, role: "user", text: row.content });
         } else if (row.role === "assistant" && row.content.trim()) {
-          restored.push({ id: row.id, role: "ai", attempts: [], chatText: row.content });
+          restored.push({
+            id: row.id,
+            role: "ai",
+            attempts: [],
+            chatText: row.content,
+            integrationCard: isIntegrationCardMeta(row.meta) ? row.meta : undefined,
+          });
         }
       }
       setMessages(restored);
@@ -142,8 +149,8 @@ export function useChat(deps: UseChatDeps) {
   );
 
   const runLoop = useCallback(
-    async (firstMessage: string, attachments: SendAttachment[] = []) => {
-      let turn: ChatTurn = {
+    async (firstMessage: string, attachments: SendAttachment[] = [], initialTurn?: ChatTurn) => {
+      let turn: ChatTurn = initialTurn ?? {
         kind: "user",
         message: firstMessage,
         projectId: projectIdRef.current,
@@ -211,6 +218,9 @@ export function useChat(deps: UseChatDeps) {
           } else if (ev.type === ChatEventType.Chat) {
             updateAi((m) => ({ ...m, chatText: (m.chatText ?? "") + ev.delta }));
             setAgentActivity("AI 正在回复…");
+          } else if (ev.type === ChatEventType.IntegrationCard) {
+            updateAi((m) => ({ ...m, integrationCard: ev.meta }));
+            setAgentActivity("等待连接 Figma…");
           } else if (ev.type === ChatEventType.Title) {
             const update = { conversationId: ev.conversationId, title: ev.title, projectTitle: ev.projectTitle };
             setLastTitleUpdate(update);
@@ -337,6 +347,28 @@ export function useChat(deps: UseChatDeps) {
     [busy, deps, runLoop, updateAi]
   );
 
+  const resume = useCallback(() => {
+    const conversationId = convIdRef.current;
+    if (busy || !conversationId) return;
+
+    const aiId = crypto.randomUUID();
+    curAiIdRef.current = aiId;
+    setMessages((prev) => [...prev, { id: aiId, role: "ai", attempts: [], fileChanges: [] }]);
+    setBusy(true);
+    setWriting(true);
+    useConversationStore.getState().startTurn(aiId);
+    abortRef.current = { aborted: false };
+
+    runLoop("", [], { kind: "resume", conversationId }).catch((err) => {
+      setBusy(false);
+      setWriting(false);
+      finishAgentTurn();
+      deps.setPreviewStatus({ kind: "err", text: "内部错误", meta: "" });
+      deps.onError(err);
+      updateAi((m) => ({ ...m, summaryKind: "fail", summary: "调用后端失败" }));
+    });
+  }, [busy, deps, runLoop, updateAi]);
+
   const stop = useCallback(() => {
     abortRef.current.aborted = true;
     setBusy(false);
@@ -361,6 +393,7 @@ export function useChat(deps: UseChatDeps) {
     openProjectChat,
     openConversation,
     send,
+    resume,
     stop,
     rerun,
   };

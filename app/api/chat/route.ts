@@ -16,10 +16,12 @@ import { attachToConversation, AttachmentError } from "@/server/attachments";
 import { closeInterruptedToolCall } from "@/server/toolCalls";
 import { makeInitialTitle, updateGeneratedTitlesFromUserMessage } from "@/server/titles";
 import { executeToolCall, type ToolExecutionContext } from "@/server/tools/executor";
+import { maybeAppendFigmaConnectionGate } from "@/server/integrations/figmaGate";
 import { AGENT_MODEL } from "@/server/models";
 import { ChatEventType, ChatTurnSchema, type ChatEvent, type ChatTurn } from "@/types/chat";
 import { FileChangeOperation } from "@/types/chat";
 import type { AttachmentSummary } from "@/types/attachment";
+import type { IntegrationCardMeta } from "@/types/integration";
 import { ToolName, type ToolCallMeta } from "@/types/tool";
 
 export const runtime = "nodejs";
@@ -271,6 +273,32 @@ function streamAgent(args: {
   }));
 }
 
+function streamStaticAssistant(args: {
+  conversationId: string;
+  projectId: string;
+  created: boolean;
+  content: string;
+  integrationCard?: IntegrationCardMeta;
+}) {
+  const encoder = new TextEncoder();
+
+  return sseResponse(new ReadableStream({
+    start(controller) {
+      const send = (event: ChatEvent) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+
+      if (args.created) send({ type: ChatEventType.Init, conversationId: args.conversationId, projectId: args.projectId });
+      send({ type: ChatEventType.Chat, delta: args.content });
+      if (args.integrationCard) {
+        send({ type: ChatEventType.IntegrationCard, meta: args.integrationCard });
+      }
+      send({ type: ChatEventType.Done });
+      controller.close();
+    },
+  }));
+}
+
 function previewFeedbackMessage(result: Extract<ChatTurn, { kind: "preview_feedback" }>["result"]) {
   if (result.status === "ok") {
     return `浏览器预览结果：${result.type}${result.durationMs ? `，耗时 ${result.durationMs}ms` : ""}。`;
@@ -356,6 +384,21 @@ export async function POST(req: Request) {
     content: body.message,
     meta: attachments?.length ? { attachments } : undefined,
   });
+
+  const figmaGate = await maybeAppendFigmaConnectionGate({
+    ownerId,
+    conversationId,
+    message: body.message,
+  });
+  if (figmaGate) {
+    return streamStaticAssistant({
+      conversationId,
+      projectId,
+      created,
+      content: figmaGate.content,
+      integrationCard: figmaGate.meta,
+    });
+  }
 
   return streamAgent({ conversationId, projectId, ownerId, created, userMessage: body.message });
 }

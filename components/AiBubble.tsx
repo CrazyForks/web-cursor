@@ -2,6 +2,7 @@
 
 import Spinner from "./Spinner";
 import MarkdownMessage from "./MarkdownMessage";
+import FigmaIntegrationCard from "./FigmaIntegrationCard";
 import type { AgentFileChange } from "@/lib/types";
 import { PHASE_LABEL, type Message } from "@/lib/types";
 import { useConversationStore } from "@/lib/conversationStore";
@@ -22,7 +23,7 @@ function changeLabel(change: AgentFileChange) {
   return "写入";
 }
 
-export default function AiBubble({ m }: { m: AiMsg }) {
+export default function AiBubble({ m, onResume }: { m: AiMsg; onResume: () => void }) {
   const busy = useConversationStore((state) => state.busy && state.activeAiId === m.id);
   const activityText = useConversationStore((state) => state.activityText);
   const hasHeal =
@@ -32,8 +33,14 @@ export default function AiBubble({ m }: { m: AiMsg }) {
 
   return (
     <>
+      {m.integrationCard && (
+        <div className={m.chatText ? "mb-3" : ""}>
+          <FigmaIntegrationCard onResume={onResume} />
+        </div>
+      )}
+
       {/* AI 直接回话/提问（reply 分支） */}
-      {m.chatText && (
+      {m.chatText && !m.integrationCard && (
         <div className="markdown-message">
           <MarkdownMessage content={m.chatText} />
         </div>

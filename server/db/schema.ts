@@ -75,3 +75,35 @@ export const chatAttachments = pgTable("chat_attachments", {
   ownerIdx: index("idx_chat_attachments_owner").on(t.ownerId, t.createdAt),
   conversationIdx: index("idx_chat_attachments_conversation").on(t.conversationId),
 }));
+
+export const figmaConnections = pgTable("figma_connections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("owner_id").notNull(),
+  figmaUserId: text("figma_user_id").notNull(),
+  accessTokenEncrypted: text("access_token_encrypted").notNull(),
+  refreshTokenEncrypted: text("refresh_token_encrypted").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  scopes: jsonb("scopes").$type<string[]>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (t) => ({
+  ownerIdx: index("idx_figma_connections_owner").on(t.ownerId),
+  activeOwnerUnique: uniqueIndex("uq_figma_connections_active_owner")
+    .on(t.ownerId)
+    .where(sql`${t.revokedAt} is null`),
+}));
+
+export const oauthStates = pgTable("oauth_states", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("owner_id").notNull(),
+  state: text("state").notNull(),
+  codeVerifier: text("code_verifier").notNull(),
+  redirectTo: text("redirect_to").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  stateUnique: uniqueIndex("uq_oauth_states_state").on(t.state),
+  ownerExpiryIdx: index("idx_oauth_states_owner_expires").on(t.ownerId, t.expiresAt),
+}));

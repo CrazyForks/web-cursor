@@ -194,6 +194,7 @@ export function useWorkbenchController() {
     deleteActiveFile,
     exportProjectHtml,
     send: chat.send,
+    resume: chat.resume,
     stop: chat.stop,
     rerun: chat.rerun,
   };

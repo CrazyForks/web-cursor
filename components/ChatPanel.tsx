@@ -54,11 +54,13 @@ export default function ChatPanel({
   messages,
   projectId,
   onSend,
+  onResume,
   onStop,
 }: {
   messages: Message[];
   projectId?: string;
   onSend: (text: string, attachments?: SendAttachment[]) => void;
+  onResume: () => void;
   onStop: () => void;
 }) {
   const busy = useConversationStore((state) => state.busy);
@@ -99,8 +101,14 @@ export default function ChatPanel({
             </div>
           ) : (
             <div key={m.id} className="flex max-w-full">
-              <div className="min-w-0 max-w-[min(88%,760px)] rounded-2xl rounded-tl-md border border-border bg-panel2/95 px-3.5 py-2.5 text-[13.5px] leading-[1.65] text-fg">
-                <AiBubble m={m} />
+              <div
+                className={
+                  m.integrationCard
+                    ? "min-w-0 w-full max-w-[min(88%,760px)] text-[13.5px] leading-[1.65] text-fg"
+                    : "min-w-0 max-w-[min(88%,760px)] rounded-2xl rounded-tl-md border border-border bg-panel2/95 px-3.5 py-2.5 text-[13.5px] leading-[1.65] text-fg"
+                }
+              >
+                <AiBubble m={m} onResume={onResume} />
               </div>
             </div>
           )
