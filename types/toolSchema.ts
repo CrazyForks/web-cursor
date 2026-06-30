@@ -27,6 +27,12 @@ export const InspectAttachmentArgsSchema = z.object({
   attachmentId: z.string().uuid(),
 }).strict();
 
+export const InspectFigmaDesignArgsSchema = z.object({
+  figmaUrl: z.string().url(),
+  maxDepth: z.number().int().min(1).max(8).optional(),
+  includeAssets: z.boolean(),
+}).strict();
+
 export const ReplyArgsSchema = z.object({
   message: z.string().min(1),
 }).strict();

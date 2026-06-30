@@ -12,7 +12,7 @@ import { db } from "@/server/db";
 import { figmaConnections, oauthStates } from "@/server/db/schema";
 
 const FIGMA_AUTHORIZE_URL = "https://www.figma.com/oauth";
-const FIGMA_TOKEN_URL = "https://api.figma.com/v1/oauth/token";
+export const FIGMA_TOKEN_URL = "https://api.figma.com/v1/oauth/token";
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 export const FigmaOAuthScope = {
@@ -100,12 +100,29 @@ function encryptionKey(): Buffer {
   return crypto.createHash("sha256").update(secret).digest();
 }
 
-function encryptToken(token: string): string {
+export function encryptToken(token: string): string {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey(), iv);
   const encrypted = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return ["v1", iv.toString("base64url"), tag.toString("base64url"), encrypted.toString("base64url")].join(":");
+}
+
+export function decryptToken(value: string): string {
+  const [version, ivValue, tagValue, encryptedValue] = value.split(":");
+  if (version !== "v1" || !ivValue || !tagValue || !encryptedValue) {
+    throw new FigmaOAuthError(FigmaOAuthErrorCode.BadTokenResponse, "Encrypted token format is invalid.", 500);
+  }
+  const decipher = crypto.createDecipheriv(
+    "aes-256-gcm",
+    encryptionKey(),
+    Buffer.from(ivValue, "base64url"),
+  );
+  decipher.setAuthTag(Buffer.from(tagValue, "base64url"));
+  return Buffer.concat([
+    decipher.update(Buffer.from(encryptedValue, "base64url")),
+    decipher.final(),
+  ]).toString("utf8");
 }
 
 function expiresAtFrom(token: FigmaTokenResponse): Date {
@@ -186,24 +203,22 @@ export async function completeFigmaOAuthCallback(req: Request, state: string, co
   const token = await exchangeCode(req, code, row.codeVerifier);
   const now = new Date();
 
-  await db.transaction(async (tx) => {
-    await tx
-      .update(figmaConnections)
-      .set({ revokedAt: now, updatedAt: now })
-      .where(and(eq(figmaConnections.ownerId, row.ownerId), isNull(figmaConnections.revokedAt)));
+  await db
+    .update(figmaConnections)
+    .set({ revokedAt: now, updatedAt: now })
+    .where(and(eq(figmaConnections.ownerId, row.ownerId), isNull(figmaConnections.revokedAt)));
 
-    await tx.insert(figmaConnections).values({
-      ownerId: row.ownerId,
-      figmaUserId: token.user_id_string,
-      accessTokenEncrypted: encryptToken(token.access_token),
-      refreshTokenEncrypted: encryptToken(token.refresh_token),
-      expiresAt: expiresAtFrom(token),
-      scopes: [...FIGMA_OAUTH_SCOPES],
-      updatedAt: now,
-    });
-
-    await tx.update(oauthStates).set({ consumedAt: now }).where(eq(oauthStates.id, row.id));
+  await db.insert(figmaConnections).values({
+    ownerId: row.ownerId,
+    figmaUserId: token.user_id_string,
+    accessTokenEncrypted: encryptToken(token.access_token),
+    refreshTokenEncrypted: encryptToken(token.refresh_token),
+    expiresAt: expiresAtFrom(token),
+    scopes: [...FIGMA_OAUTH_SCOPES],
+    updatedAt: now,
   });
+
+  await db.update(oauthStates).set({ consumedAt: now }).where(eq(oauthStates.id, row.id));
 
   return row.redirectTo;
 }

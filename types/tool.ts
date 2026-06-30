@@ -7,6 +7,7 @@ export const ToolName = {
   RenameFile: "rename_file",
   RunPreview: "run_preview",
   InspectAttachment: "inspect_attachment",
+  InspectFigmaDesign: "inspect_figma_design",
 } as const;
 
 export type ToolName = typeof ToolName[keyof typeof ToolName];

@@ -7,7 +7,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Boxes, CheckCircle2, Link2, Loader2, RefreshCw, Unplug, Wand2, XCircle } from "lucide-react";
+import { Boxes, CheckCircle2, Link2, Loader2, RefreshCw, Wand2, XCircle } from "lucide-react";
 import { req } from "@/lib/api";
 import { getOwnerId } from "@/lib/owner";
 
@@ -24,7 +24,6 @@ type ServerFigmaStatus =
 type Props = {
   returnTo?: string;
   onResume?: () => void;
-  showDisconnect?: boolean;
   onLog?: (message: string) => void;
 };
 
@@ -32,19 +31,6 @@ const buttonBase =
   "inline-flex h-8 items-center justify-center gap-2 rounded-md border px-3 text-[12.5px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50";
 const primaryButton = `${buttonBase} border-[#f24e1e] bg-[#f24e1e] text-white hover:bg-[#d94419]`;
 const quietButton = `${buttonBase} border-[#34312b] bg-[#151412] text-[#f7f3ea] hover:border-[#5d554a]`;
-const dangerButton = `${buttonBase} border-[#4a2a25] bg-[#211412] text-[#ffb8aa] hover:border-[#8d4336]`;
-
-function formatExpiry(value: string | null) {
-  if (!value) return "未返回过期时间";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "过期时间格式异常";
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
 
 function statusCopy(status: FigmaConnectionStatus) {
   if (status.status === "loading") {
@@ -60,7 +46,7 @@ function statusCopy(status: FigmaConnectionStatus) {
       icon: <CheckCircle2 className="h-4 w-4" />,
       label: "已连接",
       title: "Figma 已连接",
-      detail: `Figma user: ${status.figmaUserId}`,
+      detail: "可以继续读取这个设计链接。",
     };
   }
   if (status.status === "error") {
@@ -91,7 +77,6 @@ function currentReturnTo() {
 export default function FigmaIntegrationCard({
   returnTo,
   onResume,
-  showDisconnect = true,
   onLog,
 }: Props) {
   const [status, setStatus] = useState<FigmaConnectionStatus>({ status: "loading" });
@@ -147,21 +132,6 @@ export default function FigmaIntegrationCard({
     popup.focus();
   }, [connectUrl, log]);
 
-  const disconnect = useCallback(async () => {
-    setBusy(true);
-    try {
-      await req("POST", "/api/integrations/figma/status", { action: "disconnect" });
-      log("disconnect -> ok");
-      await refreshStatus();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus({ status: "error", message });
-      log(`disconnect error -> ${message}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [log, refreshStatus]);
-
   useEffect(() => {
     if (!popupBusy) return;
     const timer = window.setInterval(() => {
@@ -205,27 +175,6 @@ export default function FigmaIntegrationCard({
         </div>
       </div>
 
-      {connected && (
-        <div className="grid gap-3 border-b border-[#2b261f] px-4 py-3 sm:grid-cols-2">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#81786c]">Scopes</div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {status.scopes.map((scope) => (
-                <span key={scope} className="rounded border border-[#34312b] bg-[#151412] px-2 py-1 font-mono text-[11px] text-[#e9dfd0]">
-                  {scope}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#81786c]">Access Token</div>
-            <div className="mt-2 rounded border border-[#34312b] bg-[#151412] px-3 py-2 text-[12px] text-[#e9dfd0]">
-              过期时间：{formatExpiry(status.expiresAt)}
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="flex flex-wrap items-center gap-2 px-4 py-3">
         {(status.status === "disconnected" || popupError) && (
           <button className={primaryButton} type="button" disabled={effectiveBusy} onClick={openConnectPopup}>
@@ -234,22 +183,14 @@ export default function FigmaIntegrationCard({
           </button>
         )}
         {connected && (
-          <>
-            {onResume && (
-              <button className={primaryButton} type="button" disabled={effectiveBusy} onClick={onResume}>
-                <Wand2 className="h-4 w-4" />
-                继续生成
-              </button>
-            )}
-            {showDisconnect && (
-              <button className={dangerButton} type="button" disabled={effectiveBusy} onClick={disconnect}>
-                {effectiveBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unplug className="h-4 w-4" />}
-                断开连接
-              </button>
-            )}
-          </>
+          onResume && (
+            <button className={primaryButton} type="button" disabled={effectiveBusy} onClick={onResume}>
+              <Wand2 className="h-4 w-4" />
+              继续生成
+            </button>
+          )
         )}
-        {(status.status === "error" || status.status === "connected") && (
+        {status.status === "error" && (
           <button className={quietButton} type="button" disabled={effectiveBusy} onClick={refreshStatus}>
             <RefreshCw className="h-4 w-4" />
             刷新状态

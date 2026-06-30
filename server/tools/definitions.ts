@@ -114,6 +114,30 @@ export const toolDefinitions = [
     },
   },
   {
+    name: ToolName.InspectFigmaDesign,
+    description:
+      "读取用户提供的 Figma frame/node 链接，返回经过服务端校验和压缩的设计事实。必须提供包含 node-id 的 figma.com/design 或 figma.com/file URL；不要猜测未返回的设计内容或图片 URL。",
+    parameters: {
+      type: "object",
+      properties: {
+        figmaUrl: {
+          type: "string",
+          description: "用户提供的 Figma design/file URL，必须包含 node-id，例如 https://www.figma.com/design/FILE/name?node-id=1-2",
+        },
+        maxDepth: {
+          type: "number",
+          description: "可选。返回 Figma 节点树的最大深度，默认 4，最大 8。",
+        },
+        includeAssets: {
+          type: "boolean",
+          description: "是否请求目标节点的临时 Figma 导出图片 URL。只有需要引用视觉资产时才设为 true。",
+        },
+      },
+      required: ["figmaUrl", "includeAssets"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: ToolName.Reply,
     description: "需求不清或不需要修改代码时，用自然语言回复用户。",
     parameters: {

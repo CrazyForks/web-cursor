@@ -7,6 +7,8 @@
 import "server-only";
 import { z } from "zod";
 import { inspectAttachment, AttachmentError, AttachmentErrorCode } from "@/server/attachments";
+import { inspectFigmaDesign } from "@/server/figma/inspect";
+import { FigmaErrorCode, FigmaInspectError, type FigmaDesignContext } from "@/server/figma/types";
 import {
   deleteProjectFile,
   FileOperationError,
@@ -19,6 +21,7 @@ import {
 import {
   DeleteFileArgsSchema,
   InspectAttachmentArgsSchema,
+  InspectFigmaDesignArgsSchema,
   ListFilesArgsSchema,
   ReadFileArgsSchema,
   RenameFileArgsSchema,
@@ -41,6 +44,16 @@ export const ToolExecutionErrorCode = {
   Conflict: FileOperationErrorCode.Conflict,
   Unsupported: AttachmentErrorCode.Unsupported,
   InternalError: FileOperationErrorCode.InternalError,
+  FigmaNotConnected: FigmaErrorCode.NotConnected,
+  FigmaInvalidUrl: FigmaErrorCode.InvalidUrl,
+  FigmaNodeRequired: FigmaErrorCode.NodeRequired,
+  FigmaUnauthorized: FigmaErrorCode.Unauthorized,
+  FigmaForbidden: FigmaErrorCode.Forbidden,
+  FigmaNotFound: FigmaErrorCode.NotFound,
+  FigmaUnsupportedNode: FigmaErrorCode.UnsupportedNode,
+  FigmaProviderUnavailable: FigmaErrorCode.ProviderUnavailable,
+  FigmaRateLimited: FigmaErrorCode.RateLimited,
+  FigmaAssetExportFailed: FigmaErrorCode.AssetExportFailed,
 } as const;
 
 export type ToolExecutionErrorCode =
@@ -60,6 +73,7 @@ export type ToolExecutionResult =
       mimeType: string;
       observations: string;
     }
+  | FigmaDesignContext
   | { status: "ok"; tool: typeof ToolName.Reply; message: string }
   | {
       status: "error";
@@ -128,6 +142,15 @@ export async function executeToolCall(
         });
         return { status: "ok", tool, ...result };
       }
+      case ToolName.InspectFigmaDesign: {
+        const args = InspectFigmaDesignArgsSchema.parse(parseArgs(toolCall.arguments));
+        return inspectFigmaDesign({
+          ownerId: ctx.ownerId,
+          figmaUrl: args.figmaUrl,
+          maxDepth: args.maxDepth,
+          includeAssets: args.includeAssets,
+        });
+      }
       case ToolName.Reply: {
         const args = ReplyArgsSchema.parse(parseArgs(toolCall.arguments));
         return { status: "ok", tool, message: args.message };
@@ -146,6 +169,9 @@ export async function executeToolCall(
         error.code === AttachmentErrorCode.Unsupported ? ToolExecutionErrorCode.Unsupported : ToolExecutionErrorCode.InternalError,
         error.message,
       );
+    }
+    if (error instanceof FigmaInspectError) {
+      return errorResult(tool, error.code, error.message);
     }
     return errorResult(tool, ToolExecutionErrorCode.InternalError, error instanceof Error ? error.message : String(error));
   }
