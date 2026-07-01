@@ -62,7 +62,7 @@ async function requestAssistant(rows: DbMessage[], locale: AppLocale) {
     messages: assistantMessages(rows, locale),
     model: AGENT_MODEL,
     tools,
-    tool_choice: "required",
+    tool_choice: "auto",
     stream: true,
     thinking: { type: "disabled" },
   };
@@ -266,17 +266,6 @@ async function runAgentLoop({
         send(fileChangedEvent(result) ?? { type: ChatEventType.FilesChanged });
       }
 
-      if (result.status === "ok" && result.tool === ToolName.Reply) {
-        send({ type: ChatEventType.Chat, delta: result.message });
-        await appendMessage(conversationId, {
-          role: "assistant",
-          content: result.message,
-          model: AGENT_MODEL,
-          meta: { kind: "reply" },
-        });
-        send({ type: ChatEventType.Done });
-        return;
-      }
     }
   }
 

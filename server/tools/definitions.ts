@@ -214,21 +214,6 @@ export const toolDefinitions = [
       additionalProperties: false,
     },
   },
-  {
-    name: ToolName.Reply,
-    description: "需求不清或不需要修改代码时，用自然语言回复用户。",
-    parameters: {
-      type: "object",
-      properties: {
-        message: {
-          type: "string",
-          description: "回复用户的内容。",
-        },
-      },
-      required: ["message"],
-      additionalProperties: false,
-    },
-  },
 ] as const;
 
 export const tools = toolDefinitions.map((tool) => ({

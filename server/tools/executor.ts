@@ -27,7 +27,6 @@ import {
   ListFilesArgsSchema,
   ReadFileArgsSchema,
   RenameFileArgsSchema,
-  ReplyArgsSchema,
   RunPreviewArgsSchema,
   WriteFileArgsSchema,
 } from "@/types/toolSchema";
@@ -77,7 +76,6 @@ export type ToolExecutionResult =
     }
   | FigmaDesignContext
   | ReturnType<typeof pendingImageRunResult>
-  | { status: "ok"; tool: typeof ToolName.Reply; message: string }
   | {
       status: "error";
       tool: string;
@@ -164,10 +162,6 @@ export async function executeToolCall(
           input: args,
         });
         return pendingImageRunResult(run);
-      }
-      case ToolName.Reply: {
-        const args = ReplyArgsSchema.parse(parseArgs(toolCall.arguments));
-        return { status: "ok", tool, message: args.message };
       }
     }
   } catch (error) {

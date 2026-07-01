@@ -41,6 +41,7 @@ export default function Composer({
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
+  const isComposingRef = useRef(false);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -263,13 +264,21 @@ export default function Composer({
           placeholder={t("placeholder")}
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onCompositionStart={() => {
+            isComposingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            isComposingRef.current = false;
+          }}
           onPaste={(e) => {
             if (busy) return;
             const hasImage = addClipboardImages(e.clipboardData.items);
             if (hasImage) e.preventDefault();
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            const isComposing =
+              e.nativeEvent.isComposing || isComposingRef.current || e.keyCode === 229;
+            if (e.key === "Enter" && !e.shiftKey && !isComposing) {
               e.preventDefault();
               submit();
             }

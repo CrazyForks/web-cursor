@@ -1,5 +1,4 @@
 export const ToolName = {
-  Reply: "reply",
   ListFiles: "list_files",
   ReadFile: "read_file",
   WriteFile: "write_file",

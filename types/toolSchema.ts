@@ -61,10 +61,6 @@ export const GenerateImageArgsSchema = z.object({
   images: z.array(GenerateImageItemSchema).min(1).max(4),
 }).strict();
 
-export const ReplyArgsSchema = z.object({
-  message: z.string().min(1),
-}).strict();
-
 export const ToolResultSchema = z.discriminatedUnion("type", [
   z.object({
     status: z.literal("ok"),
