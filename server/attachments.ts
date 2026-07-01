@@ -46,7 +46,7 @@ export class AttachmentError extends Error {
 
 type AttachmentRow = typeof chatAttachments.$inferSelect;
 
-function toSummary(row: Pick<AttachmentRow, "id" | "type" | "mimeType" | "sizeBytes">): AttachmentSummary {
+function toSummary(row: Pick<AttachmentRow, "id" | "type" | "mimeType" | "sizeBytes" | "originalName">): AttachmentSummary {
   if (row.type !== AttachmentType.Image) {
     throw new AttachmentError(AttachmentErrorCode.Unsupported, `Unsupported attachment type: ${row.type}`);
   }
@@ -58,6 +58,7 @@ function toSummary(row: Pick<AttachmentRow, "id" | "type" | "mimeType" | "sizeBy
     type: AttachmentType.Image,
     mimeType: row.mimeType as ImageMimeType,
     sizeBytes: row.sizeBytes,
+    name: row.originalName ?? undefined,
   };
 }
 
@@ -113,6 +114,7 @@ export async function uploadAttachment(ownerId: string, input: UploadAttachment)
       type: chatAttachments.type,
       mimeType: chatAttachments.mimeType,
       sizeBytes: chatAttachments.sizeBytes,
+      originalName: chatAttachments.originalName,
     });
 
     return toSummary(row);
@@ -144,6 +146,7 @@ export async function attachToConversation({
       type: chatAttachments.type,
       mimeType: chatAttachments.mimeType,
       sizeBytes: chatAttachments.sizeBytes,
+      originalName: chatAttachments.originalName,
     })
     .from(chatAttachments)
     .where(and(
@@ -166,6 +169,33 @@ export async function attachToConversation({
     ));
 
   return rows.map(toSummary);
+}
+
+export async function listConversationAttachmentViews(
+  conversationId: string,
+  attachmentIds: string[],
+): Promise<Map<string, AttachmentSummary>> {
+  if (attachmentIds.length === 0) return new Map();
+
+  const rows = await db
+    .select({
+      id: chatAttachments.id,
+      type: chatAttachments.type,
+      mimeType: chatAttachments.mimeType,
+      sizeBytes: chatAttachments.sizeBytes,
+      originalName: chatAttachments.originalName,
+    })
+    .from(chatAttachments)
+    .where(and(
+      inArray(chatAttachments.id, attachmentIds),
+      eq(chatAttachments.conversationId, conversationId),
+      isNull(chatAttachments.deletedAt),
+    ));
+
+  return new Map(rows.map((row) => {
+    const summary = toSummary(row);
+    return [summary.id, { ...summary, previewUrl: `/api/attachments/${summary.id}` }];
+  }));
 }
 
 async function getConversationAttachment(ctx: {
@@ -210,6 +240,41 @@ async function readAttachmentDataUrl(row: AttachmentRow): Promise<string> {
 
   const base64 = Buffer.concat(chunks).toString("base64");
   return `data:${row.mimeType};base64,${base64}`;
+}
+
+export async function readAttachmentBlob(attachmentId: string): Promise<{
+  mimeType: ImageMimeType;
+  stream: ReadableStream<Uint8Array>;
+}> {
+  const [row] = await db
+    .select()
+    .from(chatAttachments)
+    .where(and(
+      eq(chatAttachments.id, attachmentId),
+      isNull(chatAttachments.deletedAt),
+    ))
+    .limit(1);
+
+  if (!row) throw new AttachmentError(AttachmentErrorCode.NotFound, `Attachment not found: ${attachmentId}`);
+  if (row.type !== AttachmentType.Image) {
+    throw new AttachmentError(AttachmentErrorCode.Unsupported, `Unsupported attachment type: ${row.type}`);
+  }
+  if (!Object.values(ImageMimeType).includes(row.mimeType as ImageMimeType)) {
+    throw new AttachmentError(AttachmentErrorCode.Unsupported, `Unsupported image mime type: ${row.mimeType}`);
+  }
+
+  const result = await get(row.blobPath, { access: "private" });
+  if (!result) {
+    throw new AttachmentError(AttachmentErrorCode.Storage, "Blob read returned no result.");
+  }
+  if (result.statusCode !== 200) {
+    throw new AttachmentError(AttachmentErrorCode.Storage, `Blob read failed with status ${result.statusCode}.`);
+  }
+  if (!result.stream) {
+    throw new AttachmentError(AttachmentErrorCode.Storage, "Blob read returned no stream.");
+  }
+
+  return { mimeType: row.mimeType as ImageMimeType, stream: result.stream };
 }
 
 export async function inspectAttachment(ctx: {

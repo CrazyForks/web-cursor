@@ -29,9 +29,13 @@ export const UploadAttachmentSchema = z.object({
 export type ChatAttachmentRef = z.infer<typeof ChatAttachmentRefSchema>;
 export type UploadAttachment = z.infer<typeof UploadAttachmentSchema>;
 
-export type AttachmentSummary = {
-  id: string;
-  type: typeof AttachmentType.Image;
-  mimeType: ImageMimeType;
-  sizeBytes: number;
-};
+export const AttachmentSummarySchema = z.object({
+  id: z.string().uuid(),
+  type: z.literal(AttachmentType.Image),
+  mimeType: z.enum([ImageMimeType.Png, ImageMimeType.Jpeg, ImageMimeType.Webp]),
+  sizeBytes: z.number().int().nonnegative(),
+  name: z.string().optional(),
+  previewUrl: z.string().optional(),
+}).strict();
+
+export type AttachmentSummary = z.infer<typeof AttachmentSummarySchema>;

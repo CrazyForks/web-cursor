@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { MessageCircle } from "lucide-react";
 import AiBubble from "./AiBubble";
@@ -18,32 +18,79 @@ function formatBytes(bytes: number) {
 
 function UserAttachments({ attachments }: { attachments: UserMessageAttachment[] }) {
   const t = useTranslations("Chat");
+  const [preview, setPreview] = useState<{
+    attachment: UserMessageAttachment;
+    left: number;
+    top: number;
+  } | null>(null);
+
+  function showPreview(attachment: UserMessageAttachment, target: HTMLElement) {
+    if (!attachment.previewUrl) return;
+
+    const rect = target.getBoundingClientRect();
+    const previewWidth = 340;
+    const gap = 12;
+    const leftSpace = rect.left - gap;
+    const rightSpace = window.innerWidth - rect.right - gap;
+    const left = rightSpace >= previewWidth || rightSpace >= leftSpace
+      ? Math.min(rect.right + gap, window.innerWidth - previewWidth - gap)
+      : Math.max(gap, rect.left - previewWidth - gap);
+    const top = Math.min(Math.max(gap, rect.top), window.innerHeight - 300 - gap);
+
+    setPreview({ attachment, left, top });
+  }
 
   return (
-    <div className="mt-2 flex max-w-full flex-wrap gap-2">
-      {attachments.map((attachment) => (
-        <div
-          key={attachment.id}
-          className="flex max-w-[210px] min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-black/20 p-1.5"
-        >
-          {attachment.previewUrl ? (
-            <img
-              src={attachment.previewUrl}
-              alt={attachment.name ?? t("imageAttachment")}
-              className="h-10 w-10 flex-none rounded-md object-cover"
-            />
-          ) : (
-            <div className="flex h-10 w-10 flex-none items-center justify-center rounded-md border border-white/10 text-[10px] text-white/70">
-              IMG
+    <>
+      <div className="mt-2 flex max-w-full flex-wrap gap-2">
+        {attachments.map((attachment) => (
+          <div
+            key={attachment.id}
+            tabIndex={attachment.previewUrl ? 0 : -1}
+            className="flex max-w-[210px] min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-black/20 p-1.5 outline-none transition hover:border-white/30 focus-visible:border-white/40"
+            onMouseEnter={(event) => showPreview(attachment, event.currentTarget)}
+            onFocus={(event) => showPreview(attachment, event.currentTarget)}
+            onMouseLeave={() => setPreview(null)}
+            onBlur={() => setPreview(null)}
+          >
+            {attachment.previewUrl ? (
+              <img
+                src={attachment.previewUrl}
+                alt={attachment.name ?? t("imageAttachment")}
+                className="h-10 w-10 flex-none rounded-md object-cover"
+              />
+            ) : (
+              <div className="flex h-10 w-10 flex-none items-center justify-center rounded-md border border-white/10 text-[10px] text-white/70">
+                IMG
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[11px] leading-4 text-white/90">{attachment.name ?? t("imageAttachment")}</div>
+              <div className="text-[10px] leading-4 text-white/55">{attachment.mimeType} · {formatBytes(attachment.sizeBytes)}</div>
             </div>
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[11px] leading-4 text-white/90">{attachment.name ?? t("imageAttachment")}</div>
-            <div className="text-[10px] leading-4 text-white/55">{attachment.mimeType} · {formatBytes(attachment.sizeBytes)}</div>
+          </div>
+        ))}
+      </div>
+
+      {preview?.attachment.previewUrl ? (
+        <div
+          className="pointer-events-none fixed z-[80] overflow-hidden rounded-xl border border-white/15 bg-[#0d0c0a] p-2 shadow-[0_18px_60px_rgba(0,0,0,0.48)]"
+          style={{ left: preview.left, top: preview.top, width: 340 }}
+        >
+          <img
+            src={preview.attachment.previewUrl}
+            alt={preview.attachment.name ?? t("imageAttachment")}
+            className="max-h-[280px] w-full rounded-lg object-contain"
+          />
+          <div className="mt-2 flex min-w-0 items-center justify-between gap-3 px-1 pb-0.5">
+            <span className="min-w-0 truncate text-[11px] text-white/85">
+              {preview.attachment.name ?? t("imageAttachment")}
+            </span>
+            <span className="flex-none text-[10px] text-white/45">{formatBytes(preview.attachment.sizeBytes)}</span>
           </div>
         </div>
-      ))}
-    </div>
+      ) : null}
+    </>
   );
 }
 

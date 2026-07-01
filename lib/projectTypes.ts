@@ -1,4 +1,5 @@
 import type { ImageRunView } from "@/lib/types";
+import type { AttachmentSummary } from "@/types/attachment";
 
 export type Project = {
   id: string;
@@ -39,7 +40,10 @@ export type StoredMessage = {
   id: string;
   role: "user" | "assistant" | "tool" | "system";
   content: string;
-  meta?: unknown;
+  meta?: {
+    attachments?: AttachmentSummary[];
+    [key: string]: unknown;
+  };
   imageRuns?: ImageRunView[];
 };
 

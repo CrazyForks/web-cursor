@@ -18,6 +18,7 @@ import { ChatEventType } from "@/types/chat";
 import { ImageJobStatus, ImageRunStatus } from "@/types/image";
 import { isIntegrationCardMeta } from "@/types/integration";
 import { ToolName, ToolResultType, type ToolResult } from "@/types/tool";
+import { AttachmentSummarySchema } from "@/types/attachment";
 
 const APP_ENTRY_PATH = "src/App.tsx";
 const MAX_CLIENT_TOOL_RESUMES = 8;
@@ -36,6 +37,8 @@ type ProjectRef = {
 };
 
 type TimelineStamp = Pick<AiTimelineItem, "receivedAt" | "order">;
+
+const RestoredAttachmentSchema = AttachmentSummarySchema.array();
 
 type UseChatDeps = {
   loadFiles: (projectId: string, preferredPath?: string) => Promise<ProjectFileSummary[]>;
@@ -84,6 +87,18 @@ function finishAgentTurn() {
 
 function appendTimelineItem<T extends AiTimelineItem>(timeline: AiTimelineItem[] | undefined, item: T) {
   return [...(timeline ?? []), item];
+}
+
+function restoredAttachments(meta: unknown) {
+  const rawAttachments = (meta as { attachments?: unknown } | null)?.attachments;
+  if (rawAttachments === undefined) return undefined;
+
+  const parsed = RestoredAttachmentSchema.safeParse(rawAttachments);
+  if (!parsed.success) {
+    console.warn("Invalid restored attachment meta", parsed.error.message);
+    return undefined;
+  }
+  return parsed.data;
 }
 
 export function useChat(deps: UseChatDeps) {
@@ -216,7 +231,12 @@ export function useChat(deps: UseChatDeps) {
       const restored: Message[] = [];
       for (const row of rows) {
         if (row.role === "user") {
-          restored.push({ id: row.id, role: "user", text: row.content });
+          restored.push({
+            id: row.id,
+            role: "user",
+            text: row.content,
+            attachments: restoredAttachments(row.meta),
+          });
         } else if (row.role === "assistant" && row.content.trim()) {
           restored.push({
             id: row.id,
