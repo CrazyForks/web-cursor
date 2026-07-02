@@ -5,5 +5,5 @@ export default defineConfig({
   schema: "./server/db/schema.ts",
   out: "./lib/db/migrations",
   dialect: "postgresql",
-  dbCredentials: { url: process.env.DATABASE_URL_UNPOOLED! },
+  dbCredentials: { url: process.env.DATABASE_URL! },
 });

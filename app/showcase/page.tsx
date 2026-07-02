@@ -52,9 +52,17 @@ export default async function ShowcaseIndexPage() {
                 <Link
                   key={item.slug}
                   href={`/showcase/${item.slug}`}
-                  className="group min-h-[190px] rounded-xl border border-[#29241d] bg-[#12100d] p-5 transition hover:-translate-y-0.5 hover:border-[#f25516] hover:bg-[#17130f]"
+                  className="group relative min-h-[210px] overflow-hidden rounded-xl border border-[#29241d] bg-[#12100d] p-5 transition hover:-translate-y-0.5 hover:border-[#f25516] hover:bg-[#17130f]"
                 >
-                  <div className="mb-5 flex items-center justify-between gap-4">
+                  {item.coverImageUrl ? (
+                    <img
+                      src={item.coverImageUrl}
+                      alt={item.coverImageAlt || item.title}
+                      className="absolute inset-0 h-full w-full object-cover opacity-35 transition duration-500 group-hover:scale-105 group-hover:opacity-45"
+                    />
+                  ) : null}
+                  <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(8,8,7,0.18),rgba(8,8,7,0.96))]" />
+                  <div className="relative mb-5 flex items-center justify-between gap-4">
                     <span className="rounded-full border border-[#3b3328] bg-[#080807] px-3 py-1 font-mono text-[11px] uppercase tracking-[0.08em] text-[#9d927f]">
                       {item.projectTitle}
                     </span>
@@ -62,10 +70,10 @@ export default async function ShowcaseIndexPage() {
                       {new Date(item.publishedAt).toLocaleDateString("zh-CN")}
                     </span>
                   </div>
-                  <h2 className="text-xl font-semibold leading-snug text-[#f7f4ec] group-hover:text-[#ff6b2c]">
+                  <h2 className="relative text-xl font-semibold leading-snug text-[#f7f4ec] group-hover:text-[#ff6b2c]">
                     {item.title}
                   </h2>
-                  <p className="mt-3 line-clamp-3 text-sm leading-7 text-[#b7aa96]">
+                  <p className="relative mt-3 line-clamp-3 text-sm leading-7 text-[#b7aa96]">
                     {item.description || item.conversationTitle || "查看这个真实对话如何生成可运行的 React 项目。"}
                   </p>
                 </Link>

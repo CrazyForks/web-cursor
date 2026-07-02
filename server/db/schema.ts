@@ -158,6 +158,8 @@ export const showcaseCases = pgTable("showcase_cases", {
   conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   description: text("description"),
+  coverImageUrl: text("cover_image_url"),
+  coverImageAlt: text("cover_image_alt"),
   sortOrder: integer("sort_order").notNull().default(1000),
   publishedAt: timestamp("published_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),

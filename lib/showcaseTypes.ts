@@ -5,6 +5,8 @@ export type ShowcaseListItem = {
   slug: string;
   title: string;
   description?: string;
+  coverImageUrl?: string;
+  coverImageAlt?: string;
   projectTitle: string;
   conversationTitle?: string;
   publishedAt: string;

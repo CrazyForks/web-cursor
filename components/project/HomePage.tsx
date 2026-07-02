@@ -61,6 +61,9 @@ export default function HomePage({ showcases }: HomePageProps) {
       label: item.title,
       prompt: item.description || item.conversationTitle || item.projectTitle,
       slug: item.slug,
+      description: item.description,
+      coverImageUrl: item.coverImageUrl,
+      coverImageAlt: item.coverImageAlt || item.title,
     })),
     [showcases]
   );
@@ -282,22 +285,42 @@ export default function HomePage({ showcases }: HomePageProps) {
               }
             />
 
-            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-              {suggestions.map((item) => (
-                <button
-                  key={item.slug}
-                  type="button"
-                  className="max-w-[220px] truncate rounded-full border border-[#24231f] bg-[#080807] px-3 py-1.5 text-[12px] text-[#9b9489] transition hover:border-[#3b372f] hover:bg-[#11110f] hover:text-[#f7f7f4]"
-                  onClick={() => startGeneration(item.prompt)}
-                  title={item.prompt}
-                >
-                  {item.label}
-                </button>
-              ))}
-              <Link className="rounded-full px-3 py-1.5 text-[12px] text-[#807a70] transition hover:bg-[#11110f] hover:text-[#f54e00]" href="/showcase">
-                查看案例
-              </Link>
-            </div>
+            {suggestions.length > 0 && (
+              <section className="mt-5">
+                <h2 className="mb-2 px-1 text-left text-[13px] font-semibold text-[#8c877d]">精选案例</h2>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {suggestions.map((item) => (
+                    <Link
+                      key={item.slug}
+                      href={`/showcase/${item.slug}`}
+                      className="group relative min-h-[132px] overflow-hidden rounded-xl border border-[#24231f] bg-[#0b0b0a] text-left shadow-[0_16px_42px_rgba(0,0,0,0.24)] transition hover:-translate-y-0.5 hover:border-[#5a3a28]"
+                      title={item.label}
+                    >
+                      {item.coverImageUrl ? (
+                        <img
+                          src={item.coverImageUrl}
+                          alt={item.coverImageAlt}
+                          className="absolute inset-0 h-full w-full object-cover opacity-72 transition duration-500 group-hover:scale-[1.035] group-hover:opacity-82"
+                        />
+                      ) : (
+                        <div className="absolute inset-0 bg-[linear-gradient(135deg,#171511,#080807_58%,#241006)]" />
+                      )}
+                      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,5,5,0.08),rgba(5,5,5,0.34)_45%,rgba(5,5,5,0.9))]" />
+                      <div className="relative flex min-h-[132px] flex-col justify-end p-4">
+                        <span className="line-clamp-2 text-[17px] font-semibold leading-snug text-[#f7f7f4]">
+                          {item.label}
+                        </span>
+                        {item.description ? (
+                          <span className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-[#c9c0b3]">
+                            {item.description}
+                          </span>
+                        ) : null}
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
         </section>
       </main>
