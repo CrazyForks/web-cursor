@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: WebContainer project files, run event callback, or global prewarm request
+ * [OUTPUT]: dev server URL, install/dev server errors, or warmed WebContainer singleton
+ * [POS]: B 域 WebContainer runtime 单例 —— boot/mount/install/start 当前预览项目
+ * [PROTOCOL]: 只在浏览器客户端调用；WebContainer 实例存在 globalThis，避免重复 boot；预热只 boot，不 mount/install/start。
+ */
 "use client";
 
 import { WebContainer, type WebContainerProcess } from "@webcontainer/api";
@@ -66,6 +72,10 @@ async function bootWebContainer(onEvent: (event: WebContainerRunEvent) => void) 
   const webcontainer = await state.instancePromise;
   onEvent({ type: WEB_CONTAINER_RUN_EVENT.BootReady });
   return webcontainer;
+}
+
+export async function prewarmWebContainer(onEvent: (event: WebContainerRunEvent) => void = () => undefined) {
+  await bootWebContainer(onEvent);
 }
 
 function createLogPipe(onText: (text: string) => void) {

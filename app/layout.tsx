@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { getLocale, getTranslations } from "next-intl/server";
 import { NextIntlClientProvider } from "next-intl";
+import WebContainerPreloader from "@/components/common/WebContainerPreloader";
 import { SITE_URL } from "@/lib/site";
 import "highlight.js/styles/github-dark.css";
 import "./globals.css";
@@ -81,7 +82,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang={locale === "en" ? "en" : "zh-CN"}>
       <body>
-        <NextIntlClientProvider>{children}</NextIntlClientProvider>
+        <NextIntlClientProvider>
+          {children}
+          <WebContainerPreloader />
+        </NextIntlClientProvider>
       </body>
     </html>
   );
