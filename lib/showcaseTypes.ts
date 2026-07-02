@@ -30,4 +30,10 @@ export type ShowcaseMessage = {
 export type ShowcaseDetail = ShowcaseListItem & {
   files: ShowcaseFile[];
   messages: ShowcaseMessage[];
+  artifact?: {
+    id: string;
+    filesHash: string;
+    entryUrl: string;
+    createdAt: string;
+  };
 };

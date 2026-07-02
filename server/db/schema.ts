@@ -24,6 +24,7 @@ import type {
   ImageProviderModel,
   ImageRunStatus,
 } from "../../types/image";
+import type { ShowcaseArtifactStatus } from "../../types/showcaseArtifact";
 
 export const projects = pgTable("projects", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -166,6 +167,26 @@ export const showcaseCases = pgTable("showcase_cases", {
   publishedIdx: index("idx_showcase_cases_published").on(t.publishedAt, t.sortOrder),
   projectIdx: index("idx_showcase_cases_project").on(t.projectId),
   conversationIdx: index("idx_showcase_cases_conversation").on(t.conversationId),
+}));
+
+export const showcaseArtifacts = pgTable("showcase_artifacts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  showcaseCaseId: uuid("showcase_case_id").notNull().references(() => showcaseCases.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+  filesHash: text("files_hash").notNull(),
+  status: text("status").$type<ShowcaseArtifactStatus>().notNull(),
+  htmlBlobPath: text("html_blob_path").notNull(),
+  blobPrefix: text("blob_prefix"),
+  entryPath: text("entry_path"),
+  filePaths: jsonb("file_paths").$type<string[]>(),
+  sizeBytes: integer("size_bytes").notNull(),
+  buildLog: text("build_log").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+}, (t) => ({
+  caseIdx: index("idx_showcase_artifacts_case").on(t.showcaseCaseId, t.createdAt),
+  readyIdx: index("idx_showcase_artifacts_ready").on(t.showcaseCaseId, t.status, t.createdAt),
 }));
 
 export const figmaConnections = pgTable("figma_connections", {

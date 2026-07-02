@@ -11,6 +11,7 @@ import { assertWebContainerProjectContract } from "@/lib/webcontainer/contract";
 import { projectFilesToFileSystemTree } from "@/lib/webcontainer/files";
 import {
   WEB_CONTAINER_RUN_EVENT,
+  WebContainerBuildError,
   WebContainerDevServerError,
   WebContainerInstallError,
   WebContainerUserError,
@@ -32,6 +33,16 @@ export type RunWebContainerProjectResult = {
   port: number;
   url: string;
   rawLog: string;
+};
+
+export type BuildWebContainerStaticArtifactResult = {
+  files: WebContainerBuildFile[];
+  rawLog: string;
+};
+
+export type WebContainerBuildFile = {
+  path: string;
+  bytes: Uint8Array;
 };
 
 type WebContainerRuntimeState = {
@@ -84,6 +95,43 @@ function createLogPipe(onText: (text: string) => void) {
       onText(text);
     },
   });
+}
+
+function rewriteBrowserRouterForStaticArtifact(content: string) {
+  return content.replace(
+    /import\s*\{([^}]*\bBrowserRouter\b[^}]*)\}\s*from\s*["']react-router-dom["'];?/g,
+    (statement, specifierText: string) => {
+      const specifiers = specifierText.split(",").map((item) => item.trim()).filter(Boolean);
+      const rewritten = specifiers.map((specifier) => (
+        specifier === "BrowserRouter" ? "HashRouter as BrowserRouter" : specifier
+      ));
+      if (rewritten.join(", ") === specifiers.join(", ")) return statement;
+      return `import { ${rewritten.join(", ")} } from "react-router-dom";`;
+    }
+  );
+}
+
+function filesForStaticArtifactBuild(files: WebContainerProjectFile[]) {
+  return files.map((file) => {
+    if (!/\.[jt]sx?$/.test(file.path)) return file;
+    return {
+      ...file,
+      content: rewriteBrowserRouterForStaticArtifact(file.content),
+    };
+  });
+}
+
+async function collectDistFiles(webcontainer: WebContainer, dir = "dist"): Promise<WebContainerBuildFile[]> {
+  const entries = await webcontainer.fs.readdir(dir, { withFileTypes: true }).catch(() => {
+    throw new WebContainerBuildError("Missing build output: dist", null, "");
+  });
+  const files = await Promise.all(entries.map(async (entry) => {
+    const fullPath = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return collectDistFiles(webcontainer, fullPath);
+    const bytes = await webcontainer.fs.readFile(fullPath);
+    return [{ path: fullPath.replace(/^dist\//, ""), bytes }];
+  }));
+  return files.flat().sort((a, b) => a.path.localeCompare(b.path));
 }
 
 async function stopProcess(process: WebContainerProcess | null) {
@@ -178,6 +226,63 @@ export async function runWebContainerProject({
   const ready = await Promise.race([waitForServerReady(webcontainer, () => devLog), exitPromise]);
   onEvent({ type: WEB_CONTAINER_RUN_EVENT.ServerReady, port: ready.port, url: ready.url });
   return { ...ready, rawLog: devLog };
+}
+
+export async function buildWebContainerStaticArtifact({
+  files,
+  onEvent,
+}: RunWebContainerProjectOptions): Promise<BuildWebContainerStaticArtifactResult> {
+  assertWebContainerProjectContract(files);
+  const tree = projectFilesToFileSystemTree(filesForStaticArtifactBuild(files));
+  const webcontainer = await bootWebContainer(onEvent);
+
+  await stopWebContainerProject();
+
+  onEvent({ type: WEB_CONTAINER_RUN_EVENT.MountStart });
+  await webcontainer.mount(tree);
+  onEvent({ type: WEB_CONTAINER_RUN_EVENT.MountReady });
+
+  let installLog = "";
+  onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallStart });
+  const install = await webcontainer.spawn("npm", ["install"]);
+  void install.output.pipeTo(createLogPipe((text) => {
+    const cleanText = cleanProcessOutput(text);
+    installLog += cleanText;
+    if (cleanText) onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallLog, text: cleanText });
+  }));
+  const installExit = await install.exit;
+  if (installExit !== 0) {
+    onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallError, exitCode: installExit, rawLog: installLog });
+    throw new WebContainerInstallError(installExit, installLog);
+  }
+
+  let buildLog = "";
+  onEvent({ type: WEB_CONTAINER_RUN_EVENT.BuildStart });
+  const build = await webcontainer.spawn("npm", ["run", "build"]);
+  void build.output.pipeTo(createLogPipe((text) => {
+    const cleanText = cleanProcessOutput(text);
+    buildLog += cleanText;
+    if (cleanText) onEvent({ type: WEB_CONTAINER_RUN_EVENT.BuildLog, text: cleanText });
+  }));
+  const buildExit = await build.exit;
+  if (buildExit !== 0) {
+    onEvent({ type: WEB_CONTAINER_RUN_EVENT.BuildError, exitCode: buildExit, rawLog: buildLog });
+    throw new WebContainerBuildError(`npm run build exited with code ${buildExit}`, buildExit, buildLog);
+  }
+
+  try {
+    const files = await collectDistFiles(webcontainer);
+    if (!files.some((file) => file.path === "index.html")) {
+      throw new WebContainerBuildError("Missing build output: dist/index.html", null, buildLog);
+    }
+    onEvent({ type: WEB_CONTAINER_RUN_EVENT.BuildReady });
+    return { files, rawLog: `${installLog}\n${buildLog}` };
+  } catch (error) {
+    if (error instanceof WebContainerBuildError) {
+      throw new WebContainerBuildError(error.message, error.exitCode, `${installLog}\n${buildLog}\n${error.rawLog}`);
+    }
+    throw error;
+  }
 }
 
 export function toWebContainerUserMessage(error: unknown) {

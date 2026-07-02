@@ -17,6 +17,10 @@ export const WEB_CONTAINER_RUN_EVENT = {
   DevServerLog: "DEV_SERVER_LOG",
   DevServerError: "DEV_SERVER_ERROR",
   ServerReady: "SERVER_READY",
+  BuildStart: "BUILD_START",
+  BuildLog: "BUILD_LOG",
+  BuildError: "BUILD_ERROR",
+  BuildReady: "BUILD_READY",
 } as const;
 
 export type WebContainerRunEvent =
@@ -30,7 +34,11 @@ export type WebContainerRunEvent =
   | { type: typeof WEB_CONTAINER_RUN_EVENT.DevServerStart }
   | { type: typeof WEB_CONTAINER_RUN_EVENT.DevServerLog; text: string }
   | { type: typeof WEB_CONTAINER_RUN_EVENT.DevServerError; exitCode: number | null; rawLog: string }
-  | { type: typeof WEB_CONTAINER_RUN_EVENT.ServerReady; port: number; url: string };
+  | { type: typeof WEB_CONTAINER_RUN_EVENT.ServerReady; port: number; url: string }
+  | { type: typeof WEB_CONTAINER_RUN_EVENT.BuildStart }
+  | { type: typeof WEB_CONTAINER_RUN_EVENT.BuildLog; text: string }
+  | { type: typeof WEB_CONTAINER_RUN_EVENT.BuildError; exitCode: number | null; rawLog: string }
+  | { type: typeof WEB_CONTAINER_RUN_EVENT.BuildReady };
 
 export class WebContainerUserError extends Error {
   constructor(message: string) {
@@ -58,6 +66,18 @@ export class WebContainerDevServerError extends Error {
   constructor(message: string, exitCode: number | null, rawLog: string) {
     super(message);
     this.name = "WebContainerDevServerError";
+    this.exitCode = exitCode;
+    this.rawLog = rawLog;
+  }
+}
+
+export class WebContainerBuildError extends Error {
+  exitCode: number | null;
+  rawLog: string;
+
+  constructor(message: string, exitCode: number | null, rawLog: string) {
+    super(message);
+    this.name = "WebContainerBuildError";
     this.exitCode = exitCode;
     this.rawLog = rawLog;
   }

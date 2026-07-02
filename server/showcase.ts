@@ -10,6 +10,7 @@ import { db } from "@/server/db";
 import { conversations, imageJobs, imageRuns, projectFiles, projects, showcaseCases } from "@/server/db/schema";
 import { listMessages } from "@/server/messages";
 import { listConversationAttachmentViews } from "@/server/attachments";
+import { getLatestReadyShowcaseArtifact } from "@/server/showcaseArtifacts";
 import { AttachmentSummarySchema, type AttachmentSummary } from "@/types/attachment";
 import type { ShowcaseDetail, ShowcaseListItem, ShowcaseMessage } from "@/lib/showcaseTypes";
 import { ToolName } from "@/types/tool";
@@ -138,6 +139,7 @@ export async function listPublishedShowcaseCases(): Promise<ShowcaseListItem[]> 
   const rows = await db
     .select({
       slug: showcaseCases.slug,
+      showcaseCaseId: showcaseCases.id,
       title: showcaseCases.title,
       description: showcaseCases.description,
       publishedAt: showcaseCases.publishedAt,
@@ -168,6 +170,7 @@ export async function getPublishedShowcaseCase(slug: string): Promise<ShowcaseDe
   const [row] = await db
     .select({
       slug: showcaseCases.slug,
+      showcaseCaseId: showcaseCases.id,
       title: showcaseCases.title,
       description: showcaseCases.description,
       publishedAt: showcaseCases.publishedAt,
@@ -189,7 +192,7 @@ export async function getPublishedShowcaseCase(slug: string): Promise<ShowcaseDe
 
   if (!row || !row.publishedAt) return null;
 
-  const [messages, runs, files] = await Promise.all([
+  const [messages, runs, files, artifact] = await Promise.all([
     listMessages(row.conversationId),
     listImageRuns(row.conversationId),
     db
@@ -201,6 +204,7 @@ export async function getPublishedShowcaseCase(slug: string): Promise<ShowcaseDe
       .from(projectFiles)
       .where(and(eq(projectFiles.projectId, row.projectId), isNull(projectFiles.deletedAt)))
       .orderBy(asc(projectFiles.path)),
+    getLatestReadyShowcaseArtifact(row.showcaseCaseId),
   ]);
   const attachmentIds = messages.flatMap((message) => attachmentsFromMeta(message.meta).map((attachment) => attachment.id));
   const attachmentViews = await listConversationAttachmentViews(row.conversationId, [...new Set(attachmentIds)]);
@@ -219,5 +223,6 @@ export async function getPublishedShowcaseCase(slug: string): Promise<ShowcaseDe
       updatedAt: iso(file.updatedAt),
     })),
     messages: attachImageRuns(enrichedMessages, runs),
+    artifact: artifact ?? undefined,
   };
 }

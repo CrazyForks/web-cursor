@@ -9,13 +9,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileCode2, Folder } from "lucide-react";
 import ChatPanel from "@/components/chat/ChatPanel";
+import Spinner from "@/components/common/Spinner";
 import TopBar from "@/components/common/TopBar";
 import CodeEditor from "@/components/editor/CodeEditor";
 import PreviewPanel from "@/components/preview/PreviewPanel";
 import { usePreview } from "@/hooks/usePreview";
+import { generateAndUploadShowcaseArtifact } from "@/lib/webcontainer/showcaseArtifact";
 import type { Message } from "@/lib/types";
 import type { ShowcaseDetail, ShowcaseFile, ShowcaseMessage } from "@/lib/showcaseTypes";
-import type { WebContainerProjectFile } from "@/lib/webcontainer/types";
+import { WEB_CONTAINER_RUN_EVENT, type WebContainerProjectFile, type WebContainerRunEvent } from "@/lib/webcontainer/types";
 import type { WorkbenchViewMode } from "@/lib/workbenchStore";
 
 function fileName(path: string) {
@@ -148,7 +150,20 @@ function ReadOnlyCode({ files }: { files: ShowcaseFile[] }) {
   );
 }
 
-function ShowcasePreview({ files }: { files: ShowcaseFile[] }) {
+function ArtifactPreview({ entryUrl }: { entryUrl: string }) {
+  return (
+    <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-panel p-3">
+      <iframe
+        sandbox="allow-scripts allow-forms allow-popups"
+        src={entryUrl}
+        title="showcase artifact preview"
+        className="block h-full w-full rounded-lg border border-border bg-white"
+      />
+    </div>
+  );
+}
+
+function ShowcasePreview({ files, artifactUrl }: { files: ShowcaseFile[]; artifactUrl?: string }) {
   const projectFiles = useMemo<WebContainerProjectFile[]>(
     () => files.map((file) => ({ path: file.path, content: file.content })),
     [files],
@@ -157,9 +172,12 @@ function ShowcasePreview({ files }: { files: ShowcaseFile[] }) {
   const preview = usePreview(readProjectFiles);
 
   useEffect(() => {
+    if (artifactUrl) return;
     if (projectFiles.length === 0) return;
     void preview.runPreview("showcase");
-  }, [preview.runPreview, projectFiles.length]);
+  }, [artifactUrl, preview.runPreview, projectFiles.length]);
+
+  if (artifactUrl) return <ArtifactPreview entryUrl={artifactUrl} />;
 
   return (
     <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border">
@@ -181,7 +199,54 @@ function ShowcasePreview({ files }: { files: ShowcaseFile[] }) {
 
 export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }) {
   const messages = useMemo(() => toChatMessages(detail.messages), [detail.messages]);
+  const projectFiles = useMemo<WebContainerProjectFile[]>(
+    () => detail.files.map((file) => ({ path: file.path, content: file.content })),
+    [detail.files],
+  );
   const [viewMode, setViewMode] = useState<WorkbenchViewMode>("preview");
+  const [artifactUrl, setArtifactUrl] = useState(detail.artifact?.entryUrl);
+  const [artifactStatus, setArtifactStatus] = useState("");
+  const [artifactBusy, setArtifactBusy] = useState(false);
+  const canGenerateArtifact = process.env.NODE_ENV === "development";
+
+  function artifactEventText(event: WebContainerRunEvent) {
+    switch (event.type) {
+      case WEB_CONTAINER_RUN_EVENT.BootStart:
+        return "启动 WebContainer";
+      case WEB_CONTAINER_RUN_EVENT.MountStart:
+        return "挂载项目文件";
+      case WEB_CONTAINER_RUN_EVENT.InstallStart:
+        return "安装依赖";
+      case WEB_CONTAINER_RUN_EVENT.BuildStart:
+        return "构建静态产物";
+      case WEB_CONTAINER_RUN_EVENT.BuildReady:
+        return "静态产物已生成";
+      default:
+        return "";
+    }
+  }
+
+  async function generateArtifact() {
+    if (artifactBusy) return;
+    setArtifactBusy(true);
+    setArtifactStatus("准备生成静态预览");
+    try {
+      const saved = await generateAndUploadShowcaseArtifact({
+        slug: detail.slug,
+        files: projectFiles,
+        onEvent: (event) => {
+          const text = artifactEventText(event);
+          if (text) setArtifactStatus(text);
+        },
+      });
+      setArtifactUrl(saved.entryUrl);
+      setArtifactStatus(`已保存静态预览 · ${Math.round(saved.sizeBytes / 1024)} KB`);
+    } catch (error) {
+      setArtifactStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setArtifactBusy(false);
+    }
+  }
 
   return (
     <div className="flex h-screen min-h-0 flex-col bg-bg text-fg">
@@ -190,9 +255,23 @@ export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         rightSlot={
-          <span className="rounded-full border border-border bg-codebg px-3 py-1 text-[12px] text-muted">
-            只读案例
-          </span>
+          <div className="flex items-center gap-2">
+            {canGenerateArtifact && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-codebg px-3 py-1 text-[12px] text-muted transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={artifactBusy}
+                onClick={generateArtifact}
+                title={artifactStatus || "生成静态预览"}
+              >
+                {artifactBusy && <Spinner />}
+                生成静态预览
+              </button>
+            )}
+            <span className="rounded-full border border-border bg-codebg px-3 py-1 text-[12px] text-muted">
+              只读案例
+            </span>
+          </div>
         }
       />
 
@@ -211,7 +290,14 @@ export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }
             <ReadOnlyCode files={detail.files} />
           </div>
           <div className={(viewMode === "preview" ? "flex" : "hidden") + " absolute inset-3"}>
-            <ShowcasePreview files={detail.files} />
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+              {canGenerateArtifact && artifactStatus && (
+                <div className="flex-none rounded-lg border border-border bg-panel2 px-3 py-2 text-[12px] text-muted">
+                  {artifactStatus}
+                </div>
+              )}
+              <ShowcasePreview files={detail.files} artifactUrl={artifactUrl} />
+            </div>
           </div>
         </section>
       </main>
