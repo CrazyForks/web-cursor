@@ -34,6 +34,68 @@
     "newProject": "新建项目",
     "openProject": "打开项目查看历史会话和最后代码"
   },
+  "Home": {
+    "homeAria": "Web Cursor 首页",
+    "expandRecentProjects": "展开最近项目",
+    "collapseRecentProjects": "收起最近项目",
+    "newConversation": "新会话",
+    "recentProjects": "最近项目",
+    "emptyProjects": "还没有历史项目。",
+    "openRecentProjects": "打开最近项目",
+    "mainNav": "主导航",
+    "showcase": "案例",
+    "docs": "文档",
+    "heroTitle": "你想做什么？",
+    "generate": "生成",
+    "featuredShowcases": "精选案例"
+  },
+  "ShowcaseIndex": {
+    "metadataTitle": "Web Cursor 案例展示",
+    "metadataDescription": "查看 Web Cursor 从真实对话生成 React 项目的只读案例。",
+    "openWorkbench": "打开工作台",
+    "eyebrow": "Showcase",
+    "title": "真实对话生成的 React 项目案例",
+    "description": "每个案例都来自数据库里的真实项目与会话。页面只读展示对话、代码和浏览器内 WebContainer 预览，不允许访客修改或继续对话。",
+    "empty": "还没有发布案例。向 showcase_cases 插入 published 记录后会显示在这里。",
+    "fallbackDescription": "查看这个真实对话如何生成可运行的 React 项目。"
+  },
+  "ShowcaseDetail": {
+    "notFoundTitle": "案例不存在",
+    "metadataTitleSuffix": "Web Cursor 案例",
+    "metadataDescription": "查看 {title} 的只读 Web Cursor 生成案例。",
+    "openGraphDescription": "Web Cursor 真实对话生成案例。",
+    "readOnly": "只读案例",
+    "generateArtifact": "生成静态预览",
+    "preparingArtifact": "准备生成静态预览",
+    "artifactBooting": "启动 WebContainer",
+    "artifactMounting": "挂载项目文件",
+    "artifactInstalling": "安装依赖",
+    "artifactBuilding": "构建静态产物",
+    "artifactReady": "静态产物已生成",
+    "artifactSaved": "已保存静态预览 · {kb} KB"
+  },
+  "ShowcaseCases": {
+    "project-15f8b038": {
+      "title": "高端人体工学椅详情页",
+      "description": "适合高端 DTC 品牌的办公椅商品详情页。",
+      "coverAlt": "黑色人体工学办公椅"
+    },
+    "project-59b26a33": {
+      "title": "少儿编程机构官网",
+      "description": "面向家长和学生的少儿编程机构官网。",
+      "coverAlt": "孩子们在教室里学习编程"
+    },
+    "local-coffee-shop": {
+      "title": "本地咖啡店官网",
+      "description": "适合独立精品咖啡店的门店官网。",
+      "coverAlt": "咖啡店室内桌椅与吧台"
+    },
+    "case-7b4c7171": {
+      "title": "1024 游戏开发",
+      "description": "一个已撤销发布的历史案例。",
+      "coverAlt": "1024 游戏案例封面"
+    }
+  },
   "Workbench": {
     "conversationThreads": "对话线索",
     "newConversation": "新会话",

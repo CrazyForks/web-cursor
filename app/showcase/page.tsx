@@ -1,19 +1,36 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { getLocale, getTranslations } from "next-intl/server";
 import { listPublishedShowcaseCases } from "@/server/showcase";
 
 export const revalidate = 300;
 
-export const metadata: Metadata = {
-  title: "Web Cursor 案例展示",
-  description: "查看 Web Cursor 从真实对话生成 React 项目的只读案例。",
-  alternates: {
-    canonical: "/showcase",
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations("ShowcaseIndex");
+  return {
+    title: t("metadataTitle"),
+    description: t("metadataDescription"),
+    alternates: {
+      canonical: "/showcase",
+    },
+  };
+}
 
 export default async function ShowcaseIndexPage() {
-  const cases = await listPublishedShowcaseCases();
+  const [cases, t, casesT, locale] = await Promise.all([
+    listPublishedShowcaseCases(),
+    getTranslations("ShowcaseIndex"),
+    getTranslations("ShowcaseCases"),
+    getLocale(),
+  ]);
+
+  function showcaseText(slug: string, field: "title" | "description" | "coverAlt", fallback?: string) {
+    try {
+      return casesT(`${slug}.${field}`);
+    } catch {
+      return fallback ?? "";
+    }
+  }
 
   return (
     <main className="min-h-screen bg-[#080807] text-[#f7f4ec]">
@@ -24,17 +41,17 @@ export default async function ShowcaseIndexPage() {
               Web Cursor
             </Link>
             <Link href="/" className="rounded-md border border-[#3b3328] px-3 py-2 text-sm text-[#f7f4ec] transition hover:border-[#f25516]">
-              打开工作台
+              {t("openWorkbench")}
             </Link>
           </nav>
 
           <div className="py-16">
-            <p className="font-mono text-[12px] font-semibold uppercase tracking-[0.18em] text-[#9d927f]">Showcase</p>
+            <p className="font-mono text-[12px] font-semibold uppercase tracking-[0.18em] text-[#9d927f]">{t("eyebrow")}</p>
             <h1 className="mt-5 max-w-4xl text-4xl font-normal leading-[1.06] sm:text-6xl">
-              真实对话生成的 React 项目案例
+              {t("title")}
             </h1>
             <p className="mt-6 max-w-2xl text-sm leading-7 text-[#b7aa96]">
-              每个案例都来自数据库里的真实项目与会话。页面只读展示对话、代码和浏览器内 WebContainer 预览，不允许访客修改或继续对话。
+              {t("description")}
             </p>
           </div>
         </div>
@@ -44,11 +61,14 @@ export default async function ShowcaseIndexPage() {
         <div className="mx-auto max-w-6xl">
           {cases.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[#29241d] bg-[#12100d] p-8 text-sm leading-7 text-[#b7aa96]">
-              还没有发布案例。向 <code className="font-mono text-[#f25516]">showcase_cases</code> 插入 published 记录后会显示在这里。
+              {t("empty")}
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
-              {cases.map((item) => (
+              {cases.map((item) => {
+                const title = showcaseText(item.slug, "title", item.title);
+                const description = showcaseText(item.slug, "description", item.description || item.conversationTitle || t("fallbackDescription"));
+                return (
                 <Link
                   key={item.slug}
                   href={`/showcase/${item.slug}`}
@@ -57,7 +77,7 @@ export default async function ShowcaseIndexPage() {
                   {item.coverImageUrl ? (
                     <img
                       src={item.coverImageUrl}
-                      alt={item.coverImageAlt || item.title}
+                      alt={showcaseText(item.slug, "coverAlt", item.coverImageAlt || title)}
                       className="absolute inset-0 h-full w-full object-cover opacity-35 transition duration-500 group-hover:scale-105 group-hover:opacity-45"
                     />
                   ) : null}
@@ -67,17 +87,17 @@ export default async function ShowcaseIndexPage() {
                       {item.projectTitle}
                     </span>
                     <span className="text-[11px] text-[#756b5d]">
-                      {new Date(item.publishedAt).toLocaleDateString("zh-CN")}
+                      {new Date(item.publishedAt).toLocaleDateString(locale === "en" ? "en-US" : "zh-CN")}
                     </span>
                   </div>
                   <h2 className="relative text-xl font-semibold leading-snug text-[#f7f4ec] group-hover:text-[#ff6b2c]">
-                    {item.title}
+                    {title}
                   </h2>
                   <p className="relative mt-3 line-clamp-3 text-sm leading-7 text-[#b7aa96]">
-                    {item.description || item.conversationTitle || "查看这个真实对话如何生成可运行的 React 项目。"}
+                    {description}
                   </p>
                 </Link>
-              ))}
+              )})}
             </div>
           )}
         </div>

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import ShowcaseWorkbench from "@/components/showcase/ShowcaseWorkbench";
 import { getPublishedShowcaseCase, listPublishedShowcaseCases } from "@/server/showcase";
 
@@ -17,23 +18,35 @@ export async function generateStaticParams() {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
-  const detail = await getPublishedShowcaseCase(slug);
+  const [detail, detailT, casesT] = await Promise.all([
+    getPublishedShowcaseCase(slug),
+    getTranslations("ShowcaseDetail"),
+    getTranslations("ShowcaseCases"),
+  ]);
   if (!detail) {
     return {
-      title: "案例不存在",
+      title: detailT("notFoundTitle"),
       robots: { index: false, follow: false },
     };
   }
+  let title = detail.title;
+  let description = detail.description;
+  try {
+    title = casesT(`${detail.slug}.title`);
+    description = casesT(`${detail.slug}.description`);
+  } catch {
+    // Historical showcase rows keep title/description in DB until every slug has message keys.
+  }
 
   return {
-    title: `${detail.title} · Web Cursor 案例`,
-    description: detail.description ?? `查看 ${detail.title} 的只读 Web Cursor 生成案例。`,
+    title: `${title} · ${detailT("metadataTitleSuffix")}`,
+    description: description ?? detailT("metadataDescription", { title }),
     alternates: {
       canonical: `/showcase/${detail.slug}`,
     },
     openGraph: {
-      title: detail.title,
-      description: detail.description ?? "Web Cursor 真实对话生成案例。",
+      title,
+      description: description ?? detailT("openGraphDescription"),
       url: `/showcase/${detail.slug}`,
     },
   };

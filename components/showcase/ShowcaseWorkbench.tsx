@@ -7,6 +7,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import { FileCode2, Folder } from "lucide-react";
 import ChatPanel from "@/components/chat/ChatPanel";
 import Spinner from "@/components/common/Spinner";
@@ -198,6 +199,8 @@ function ShowcasePreview({ files, artifactUrl }: { files: ShowcaseFile[]; artifa
 }
 
 export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }) {
+  const detailT = useTranslations("ShowcaseDetail");
+  const casesT = useTranslations("ShowcaseCases");
   const messages = useMemo(() => toChatMessages(detail.messages), [detail.messages]);
   const projectFiles = useMemo<WebContainerProjectFile[]>(
     () => detail.files.map((file) => ({ path: file.path, content: file.content })),
@@ -208,19 +211,26 @@ export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }
   const [artifactStatus, setArtifactStatus] = useState("");
   const [artifactBusy, setArtifactBusy] = useState(false);
   const canGenerateArtifact = process.env.NODE_ENV === "development";
+  const title = useMemo(() => {
+    try {
+      return casesT(`${detail.slug}.title`);
+    } catch {
+      return detail.title;
+    }
+  }, [casesT, detail.slug, detail.title]);
 
   function artifactEventText(event: WebContainerRunEvent) {
     switch (event.type) {
       case WEB_CONTAINER_RUN_EVENT.BootStart:
-        return "启动 WebContainer";
+        return detailT("artifactBooting");
       case WEB_CONTAINER_RUN_EVENT.MountStart:
-        return "挂载项目文件";
+        return detailT("artifactMounting");
       case WEB_CONTAINER_RUN_EVENT.InstallStart:
-        return "安装依赖";
+        return detailT("artifactInstalling");
       case WEB_CONTAINER_RUN_EVENT.BuildStart:
-        return "构建静态产物";
+        return detailT("artifactBuilding");
       case WEB_CONTAINER_RUN_EVENT.BuildReady:
-        return "静态产物已生成";
+        return detailT("artifactReady");
       default:
         return "";
     }
@@ -229,7 +239,7 @@ export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }
   async function generateArtifact() {
     if (artifactBusy) return;
     setArtifactBusy(true);
-    setArtifactStatus("准备生成静态预览");
+    setArtifactStatus(detailT("preparingArtifact"));
     try {
       const saved = await generateAndUploadShowcaseArtifact({
         slug: detail.slug,
@@ -240,7 +250,7 @@ export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }
         },
       });
       setArtifactUrl(saved.entryUrl);
-      setArtifactStatus(`已保存静态预览 · ${Math.round(saved.sizeBytes / 1024)} KB`);
+      setArtifactStatus(detailT("artifactSaved", { kb: Math.round(saved.sizeBytes / 1024) }));
     } catch (error) {
       setArtifactStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -251,7 +261,7 @@ export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }
   return (
     <div className="flex h-screen min-h-0 flex-col bg-bg text-fg">
       <TopBar
-        projName={detail.title}
+        projName={title}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         rightSlot={
@@ -262,14 +272,14 @@ export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }
                 className="inline-flex items-center gap-1.5 rounded-full border border-border bg-codebg px-3 py-1 text-[12px] text-muted transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-45"
                 disabled={artifactBusy}
                 onClick={generateArtifact}
-                title={artifactStatus || "生成静态预览"}
+                title={artifactStatus || detailT("generateArtifact")}
               >
                 {artifactBusy && <Spinner />}
-                生成静态预览
+                {detailT("generateArtifact")}
               </button>
             )}
             <span className="rounded-full border border-border bg-codebg px-3 py-1 text-[12px] text-muted">
-              只读案例
+              {detailT("readOnly")}
             </span>
           </div>
         }

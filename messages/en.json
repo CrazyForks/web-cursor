@@ -34,6 +34,68 @@
     "newProject": "New project",
     "openProject": "Open the project to view conversation history and the latest code"
   },
+  "Home": {
+    "homeAria": "Web Cursor home",
+    "expandRecentProjects": "Expand recent projects",
+    "collapseRecentProjects": "Collapse recent projects",
+    "newConversation": "New chat",
+    "recentProjects": "Recent projects",
+    "emptyProjects": "No recent projects yet.",
+    "openRecentProjects": "Open recent projects",
+    "mainNav": "Main navigation",
+    "showcase": "Showcase",
+    "docs": "Docs",
+    "heroTitle": "What do you want to build?",
+    "generate": "Generate",
+    "featuredShowcases": "Featured showcases"
+  },
+  "ShowcaseIndex": {
+    "metadataTitle": "Web Cursor Showcase",
+    "metadataDescription": "Explore read-only React projects generated from real Web Cursor conversations.",
+    "openWorkbench": "Open workbench",
+    "eyebrow": "Showcase",
+    "title": "React projects generated from real conversations",
+    "description": "Each showcase comes from a real project and conversation in the database. The page presents the conversation, code, and WebContainer preview in read-only mode.",
+    "empty": "No published showcases yet. Insert a published showcase_cases record to display one here.",
+    "fallbackDescription": "See how this real conversation generated a runnable React project."
+  },
+  "ShowcaseDetail": {
+    "notFoundTitle": "Showcase not found",
+    "metadataTitleSuffix": "Web Cursor Showcase",
+    "metadataDescription": "View the read-only Web Cursor generated showcase for {title}.",
+    "openGraphDescription": "A real conversation-generated Web Cursor showcase.",
+    "readOnly": "Read-only showcase",
+    "generateArtifact": "Generate static preview",
+    "preparingArtifact": "Preparing static preview",
+    "artifactBooting": "Booting WebContainer",
+    "artifactMounting": "Mounting project files",
+    "artifactInstalling": "Installing dependencies",
+    "artifactBuilding": "Building static artifact",
+    "artifactReady": "Static artifact generated",
+    "artifactSaved": "Static preview saved · {kb} KB"
+  },
+  "ShowcaseCases": {
+    "project-15f8b038": {
+      "title": "Premium ergonomic chair product page",
+      "description": "A polished office chair product detail page for a premium DTC brand.",
+      "coverAlt": "Black ergonomic office chair"
+    },
+    "project-59b26a33": {
+      "title": "Kids coding school website",
+      "description": "A website for a children’s coding school, built for parents and students.",
+      "coverAlt": "Children learning programming in a classroom"
+    },
+    "local-coffee-shop": {
+      "title": "Local coffee shop website",
+      "description": "A storefront website for an independent specialty coffee shop.",
+      "coverAlt": "Coffee shop interior with tables and bar seating"
+    },
+    "case-7b4c7171": {
+      "title": "1024 game development",
+      "description": "A revoked historical showcase.",
+      "coverAlt": "1024 game showcase cover"
+    }
+  },
   "Workbench": {
     "conversationThreads": "Conversation threads",
     "newConversation": "New chat",

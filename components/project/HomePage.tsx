@@ -42,6 +42,8 @@ type StartedTurn = {
 export default function HomePage({ showcases }: HomePageProps) {
   const router = useRouter();
   const common = useTranslations("Common");
+  const home = useTranslations("Home");
+  const showcaseCases = useTranslations("ShowcaseCases");
   const locale = useLocale();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
@@ -56,16 +58,28 @@ export default function HomePage({ showcases }: HomePageProps) {
     { value: "en" as const, label: common("english") },
     { value: "zh" as const, label: common("chinese") },
   ];
+  const showcaseText = useCallback((slug: string, field: "title" | "description" | "coverAlt", fallback?: string) => {
+    try {
+      return showcaseCases(`${slug}.${field}`);
+    } catch {
+      return fallback ?? "";
+    }
+  }, [showcaseCases]);
+
   const suggestions = useMemo(
-    () => showcases.slice(0, 3).map((item) => ({
-      label: item.title,
-      prompt: item.description || item.conversationTitle || item.projectTitle,
-      slug: item.slug,
-      description: item.description,
-      coverImageUrl: item.coverImageUrl,
-      coverImageAlt: item.coverImageAlt || item.title,
-    })),
-    [showcases]
+    () => showcases.slice(0, 3).map((item) => {
+      const title = showcaseText(item.slug, "title", item.title);
+      const description = showcaseText(item.slug, "description", item.description);
+      return {
+        label: title,
+        prompt: description || item.conversationTitle || item.projectTitle,
+        slug: item.slug,
+        description,
+        coverImageUrl: item.coverImageUrl,
+        coverImageAlt: showcaseText(item.slug, "coverAlt", item.coverImageAlt || title),
+      };
+    }),
+    [showcaseText, showcases]
   );
 
   useEffect(() => {
@@ -114,7 +128,7 @@ export default function HomePage({ showcases }: HomePageProps) {
             type="button"
             className="flex min-w-0 items-center gap-2 text-left"
             onClick={() => router.push("/")}
-            aria-label="Web Cursor 首页"
+            aria-label={home("homeAria")}
           >
             <span className="grid h-8 w-8 flex-none place-items-center rounded-lg border border-[#2d2b25] bg-[#0d0d0b]">
               <img src="/icon.png" alt="" className="h-5 w-5 rounded-[4px]" />
@@ -125,7 +139,7 @@ export default function HomePage({ showcases }: HomePageProps) {
             type="button"
             className="grid h-8 w-8 place-items-center rounded-lg border border-[#24231f] bg-transparent text-[#8c877d] transition hover:text-[#f7f7f4]"
             onClick={() => setCollapsed((value) => !value)}
-            aria-label={collapsed ? "展开最近项目" : "收起最近项目"}
+            aria-label={collapsed ? home("expandRecentProjects") : home("collapseRecentProjects")}
           >
             {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
@@ -139,13 +153,13 @@ export default function HomePage({ showcases }: HomePageProps) {
               (collapsed ? "mx-auto w-9 justify-center" : "w-full gap-2 px-2")
             }
             onClick={() => setComposerResetSignal((value) => value + 1)}
-            aria-label="新会话"
+            aria-label={home("newConversation")}
           >
             <Plus size={16} />
-            {!collapsed && <span>新会话</span>}
+            {!collapsed && <span>{home("newConversation")}</span>}
           </button>
 
-          {!collapsed && <div className="px-2 pb-1 text-[11px] font-medium text-[#6f6a60]">最近项目</div>}
+          {!collapsed && <div className="px-2 pb-1 text-[11px] font-medium text-[#6f6a60]">{home("recentProjects")}</div>}
           <div className="grid gap-1">
             {loadingProjects ? (
               [0, 1, 2, 3].map((i) => (
@@ -175,13 +189,13 @@ export default function HomePage({ showcases }: HomePageProps) {
                   {!collapsed && (
                     <span className="min-w-0">
                       <span className="block truncate text-[13px] font-medium">{project.title}</span>
-                      <span className="mt-0.5 block text-[12px] text-[#807a70]">{formatTime(project.updatedAt ?? project.createdAt)}</span>
+                      <span className="mt-0.5 block text-[12px] text-[#807a70]">{formatTime(project.updatedAt ?? project.createdAt, locale)}</span>
                     </span>
                   )}
                 </button>
               ))
             ) : (
-              !collapsed && <div className="px-2 py-3 text-[12px] text-[#807a70]">还没有历史项目。</div>
+              !collapsed && <div className="px-2 py-3 text-[12px] text-[#807a70]">{home("emptyProjects")}</div>
             )}
           </div>
         </div>
@@ -193,14 +207,14 @@ export default function HomePage({ showcases }: HomePageProps) {
             <button
               type="button"
               className="grid h-8 w-8 place-items-center rounded-lg border border-[#24231f] bg-[#0b0b0a] text-[#b8b2a6] md:hidden"
-              aria-label="打开最近项目"
+              aria-label={home("openRecentProjects")}
             >
               <Menu size={16} />
             </button>
           </div>
-          <nav className="flex flex-none items-center gap-1.5" aria-label="主导航">
+          <nav className="flex flex-none items-center gap-1.5" aria-label={home("mainNav")}>
             <Link className="rounded-lg px-3 py-2 text-[13px] text-[#b8b2a6] transition hover:bg-[#11110f] hover:text-[#f54e00]" href="/showcase">
-              案例
+              {home("showcase")}
             </Link>
             <a
               className="hidden items-center gap-1 rounded-lg px-3 py-2 text-[13px] text-[#b8b2a6] transition hover:bg-[#11110f] hover:text-[#f54e00] sm:inline-flex"
@@ -211,7 +225,7 @@ export default function HomePage({ showcases }: HomePageProps) {
               <ExternalLink size={14} /> GitHub
             </a>
             <Link className="hidden rounded-lg px-3 py-2 text-[13px] text-[#b8b2a6] transition hover:bg-[#11110f] hover:text-[#f54e00] sm:inline-flex" href="/about">
-              文档
+              {home("docs")}
             </Link>
             <div
               className="relative"
@@ -266,7 +280,7 @@ export default function HomePage({ showcases }: HomePageProps) {
         <section className="min-h-0 flex-1 overflow-y-auto px-4 md:px-8">
           <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-[780px] flex-col pt-[18vh]">
             <div className="mb-5 text-center">
-              <h1 className="text-[30px] font-semibold leading-tight tracking-normal text-[#f7f7f4] md:text-[38px]">你想做什么？</h1>
+              <h1 className="text-[30px] font-semibold leading-tight tracking-normal text-[#f7f7f4] md:text-[38px]">{home("heroTitle")}</h1>
             </div>
 
             <Composer
@@ -277,7 +291,7 @@ export default function HomePage({ showcases }: HomePageProps) {
               boxClassName="rounded-[22px] border border-[#2d2a24] bg-[#0b0b0a] p-3 shadow-[0_18px_70px_rgba(0,0,0,0.28)] transition focus-within:border-[#5a3a28]"
               textareaClassName="min-h-[92px] w-full resize-none border-0 bg-transparent px-2 py-2 text-[16px] leading-7 text-[#f7f7f4] outline-none placeholder:text-[#6f6a60]"
               footerClassName="flex items-center justify-between gap-3 px-1 pt-2"
-              submitLabel="生成"
+              submitLabel={home("generate")}
               resetSignal={composerResetSignal}
               submitButtonClassName={(canSend) =>
                 "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-semibold transition disabled:cursor-not-allowed " +
@@ -287,7 +301,7 @@ export default function HomePage({ showcases }: HomePageProps) {
 
             {suggestions.length > 0 && (
               <section className="mt-5">
-                <h2 className="mb-2 px-1 text-left text-[13px] font-semibold text-[#8c877d]">精选案例</h2>
+                <h2 className="mb-2 px-1 text-left text-[13px] font-semibold text-[#8c877d]">{home("featuredShowcases")}</h2>
                 <div className="grid gap-3 sm:grid-cols-3">
                   {suggestions.map((item) => (
                     <Link
@@ -305,13 +319,13 @@ export default function HomePage({ showcases }: HomePageProps) {
                       ) : (
                         <div className="absolute inset-0 bg-[linear-gradient(135deg,#171511,#080807_58%,#241006)]" />
                       )}
-                      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,5,5,0.08),rgba(5,5,5,0.34)_45%,rgba(5,5,5,0.9))]" />
-                      <div className="relative flex min-h-[132px] flex-col justify-end p-4">
-                        <span className="line-clamp-2 text-[17px] font-semibold leading-snug text-[#f7f7f4]">
+                      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,5,5,0.82),rgba(5,5,5,0.36)_52%,rgba(5,5,5,0.1))]" />
+                      <div className="relative flex min-h-[132px] flex-col justify-between p-4">
+                        <span className="line-clamp-2 text-[17px] font-semibold leading-snug text-[#f7f7f4] drop-shadow-[0_1px_12px_rgba(0,0,0,0.65)]">
                           {item.label}
                         </span>
                         {item.description ? (
-                          <span className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-[#c9c0b3]">
+                          <span className="line-clamp-2 min-h-10 text-[12px] leading-5 text-[#d7d0c5] drop-shadow-[0_1px_10px_rgba(0,0,0,0.65)]">
                             {item.description}
                           </span>
                         ) : null}
