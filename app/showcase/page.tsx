@@ -33,7 +33,7 @@ export default async function ShowcaseIndexPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#080807] text-[#f7f4ec]">
+    <main className="h-screen overflow-y-auto bg-[#080807] text-[#f7f4ec]">
       <section className="border-b border-[#29241d] px-5 py-5 sm:px-8 lg:px-10">
         <div className="mx-auto max-w-6xl">
           <nav className="flex h-12 items-center justify-between gap-4">
@@ -72,7 +72,7 @@ export default async function ShowcaseIndexPage() {
                 <Link
                   key={item.slug}
                   href={`/showcase/${item.slug}`}
-                  className="group relative min-h-[210px] overflow-hidden rounded-xl border border-[#29241d] bg-[#12100d] p-5 transition hover:-translate-y-0.5 hover:border-[#f25516] hover:bg-[#17130f]"
+                  className="group relative flex min-h-[210px] flex-col overflow-hidden rounded-xl border border-[#29241d] bg-[#12100d] p-5 transition hover:-translate-y-0.5 hover:border-[#f25516] hover:bg-[#17130f]"
                 >
                   {item.coverImageUrl ? (
                     <img
@@ -82,20 +82,17 @@ export default async function ShowcaseIndexPage() {
                     />
                   ) : null}
                   <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(8,8,7,0.18),rgba(8,8,7,0.96))]" />
-                  <div className="relative mb-5 flex items-center justify-between gap-4">
-                    <span className="rounded-full border border-[#3b3328] bg-[#080807] px-3 py-1 font-mono text-[11px] uppercase tracking-[0.08em] text-[#9d927f]">
-                      {item.projectTitle}
-                    </span>
-                    <span className="text-[11px] text-[#756b5d]">
-                      {new Date(item.publishedAt).toLocaleDateString(locale === "en" ? "en-US" : "zh-CN")}
-                    </span>
+                  <span className="absolute right-5 top-5 z-[1] text-[11px] text-[#756b5d]">
+                    {new Date(item.publishedAt).toLocaleDateString(locale === "en" ? "en-US" : "zh-CN")}
+                  </span>
+                  <div className="relative flex flex-1 flex-col justify-between gap-4">
+                    <h2 className="text-xl font-semibold leading-snug text-[#f7f4ec] group-hover:text-[#ff6b2c]">
+                      {title}
+                    </h2>
+                    <p className="line-clamp-3 min-h-[56px] text-sm leading-7 text-[#b7aa96]">
+                      {description}
+                    </p>
                   </div>
-                  <h2 className="relative text-xl font-semibold leading-snug text-[#f7f4ec] group-hover:text-[#ff6b2c]">
-                    {title}
-                  </h2>
-                  <p className="relative mt-3 line-clamp-3 text-sm leading-7 text-[#b7aa96]">
-                    {description}
-                  </p>
                 </Link>
               )})}
             </div>
