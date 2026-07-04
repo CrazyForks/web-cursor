@@ -33,7 +33,9 @@
 1. **`/api/chat`（有状态）**—— 持 key 调 DeepSeek + **拥有对话记忆**（读写 transcript、拼上下文）。key 和 system prompt 都不进浏览器。这是 agent 的"记忆和嘴"。
 2. **持久化 CRUD**（projects / files / conversations / messages）—— 让代码和对话不随刷新丢失。
 
-后端**永远不执行 AI 生成的代码**（那是 iframe 沙箱的事），对后端来说 AI 代码只是一段字符串。
+Next.js 主后端**永远不执行 AI 生成的代码**（那是 iframe / WebContainer 沙箱，或未来独立后端沙箱执行域的事），对主后端来说 AI 代码只是一段字符串。
+
+> 如果未来要做“后端服务沙箱跑代码”，必须新增独立执行域，不能把生成代码放进 Route Handler 进程里跑。方案、免费额度和 Cloudflare 取舍见 `docs/backend-sandbox.md`。
 
 ---
 
