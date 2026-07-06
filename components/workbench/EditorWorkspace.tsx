@@ -7,6 +7,7 @@ import { useWorkbenchStore } from "@/lib/workbenchStore";
 type EditorWorkspaceProps = {
   code: string;
   files: ProjectFileSummary[];
+  currentProjectId?: string;
   activePath?: string;
   hasActiveFileDraft: boolean;
   writing: boolean;
@@ -22,6 +23,7 @@ type EditorWorkspaceProps = {
 export default function EditorWorkspace({
   code,
   files,
+  currentProjectId,
   activePath,
   hasActiveFileDraft,
   writing,
@@ -51,6 +53,7 @@ export default function EditorWorkspace({
       <EditorPanel
         code={code}
         files={files}
+        currentProjectId={currentProjectId}
         activePath={activePath}
         hasActiveFileDraft={hasActiveFileDraft}
         writing={writing}

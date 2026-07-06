@@ -52,6 +52,7 @@ export default function Workbench({
   const editor = {
     code,
     files,
+    currentProjectId,
     activePath,
     hasActiveFileDraft,
     writing,

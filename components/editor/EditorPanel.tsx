@@ -54,6 +54,7 @@ function normalizeInputPath(path: string) {
 export default function EditorPanel({
   code,
   files,
+  currentProjectId,
   activePath,
   hasActiveFileDraft,
   writing,
@@ -67,6 +68,7 @@ export default function EditorPanel({
 }: {
   code: string;
   files: ProjectFileSummary[];
+  currentProjectId?: string;
   activePath?: string;
   hasActiveFileDraft: boolean;
   writing: boolean;
@@ -242,7 +244,16 @@ export default function EditorPanel({
               {t("chooseFile")}
             </div>
           )}
-          {activePath && <CodeEditor path={activePath} value={code} onChange={onChange} onSave={onSave} />}
+          {activePath && (
+            <CodeEditor
+              projectId={currentProjectId}
+              path={activePath}
+              value={code}
+              onChange={onChange}
+              onSave={onSave}
+              completionDisabled={writing || activeFileSyncing}
+            />
+          )}
         </div>
       </section>
 

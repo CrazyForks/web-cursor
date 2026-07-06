@@ -10,6 +10,7 @@ import PreviewWorkspace from "@/components/workbench/PreviewWorkspace";
 export type EditorWorkspaceModel = {
   code: string;
   files: ProjectFileSummary[];
+  currentProjectId?: string;
   activePath?: string;
   hasActiveFileDraft: boolean;
   writing: boolean;
@@ -51,6 +52,7 @@ export default function WorkspacePanels({
       <EditorWorkspace
         code={editor.code}
         files={editor.files}
+        currentProjectId={editor.currentProjectId}
         activePath={editor.activePath}
         hasActiveFileDraft={editor.hasActiveFileDraft}
         writing={editor.writing}
