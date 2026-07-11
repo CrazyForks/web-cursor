@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import ShowcaseWorkbench from "@/components/showcase/ShowcaseWorkbench";
+import { SITE_OPEN_GRAPH_IMAGE, SITE_TWITTER_IMAGE } from "@/lib/site";
 import { getPublishedShowcaseCase, listPublishedShowcaseCases } from "@/server/showcase";
 
 export const revalidate = 300;
@@ -18,10 +19,11 @@ export async function generateStaticParams() {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
-  const [detail, detailT, casesT] = await Promise.all([
+  const [detail, detailT, casesT, locale] = await Promise.all([
     getPublishedShowcaseCase(slug),
     getTranslations("ShowcaseDetail"),
     getTranslations("ShowcaseCases"),
+    getLocale(),
   ]);
   if (!detail) {
     return {
@@ -30,24 +32,39 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     };
   }
   let title = detail.title;
-  let description = detail.description;
   try {
     title = casesT(`${detail.slug}.title`);
-    description = casesT(`${detail.slug}.description`);
   } catch {
-    // Historical showcase rows keep title/description in DB until every slug has message keys.
+    // Historical showcase rows keep titles in the database until every slug has message keys.
   }
+  const description = detailT("metadataDescription", { title });
+  const openGraphImages = detail.coverImageUrl
+    ? [{ url: detail.coverImageUrl, alt: detail.coverImageAlt ?? title }]
+    : [SITE_OPEN_GRAPH_IMAGE];
+  const twitterImages = detail.coverImageUrl
+    ? [detail.coverImageUrl]
+    : [SITE_TWITTER_IMAGE];
 
   return {
     title: `${title} · ${detailT("metadataTitleSuffix")}`,
-    description: description ?? detailT("metadataDescription", { title }),
+    description,
     alternates: {
       canonical: `/showcase/${detail.slug}`,
     },
     openGraph: {
+      type: "website",
+      siteName: "Web Cursor",
+      locale: locale === "en" ? "en_US" : "zh_CN",
       title,
-      description: description ?? detailT("openGraphDescription"),
+      description,
       url: `/showcase/${detail.slug}`,
+      images: openGraphImages,
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: twitterImages,
     },
   };
 }

@@ -18,6 +18,7 @@ export default function TopBar({
   onViewModeChange,
   onHome,
   rightSlot,
+  titleAsHeading = false,
 }: {
   projName: string;
   viewMode?: WorkbenchViewMode;
@@ -26,6 +27,7 @@ export default function TopBar({
   onViewModeChange?: (mode: WorkbenchViewMode) => void;
   onHome?: () => void;
   rightSlot?: ReactNode;
+  titleAsHeading?: boolean;
 }) {
   const t = useTranslations("TopBar");
   const common = useTranslations("Common");
@@ -66,9 +68,13 @@ export default function TopBar({
       >
         <img src="/icon.png" alt="" className="h-5 w-5 rounded-[4px]" />
       </button>
-      <span className="text-muted text-[13px]">
-        <b className="text-fg font-medium">{projName}</b>
-      </span>
+      {titleAsHeading ? (
+        <h1 className="text-fg text-[13px] font-medium">{projName}</h1>
+      ) : (
+        <span className="text-muted text-[13px]">
+          <b className="text-fg font-medium">{projName}</b>
+        </span>
+      )}
       <div className="flex-1" />
       {showModeSwitch && (
         <div className="flex items-center gap-1 rounded-full border border-border bg-[#050505] p-1">

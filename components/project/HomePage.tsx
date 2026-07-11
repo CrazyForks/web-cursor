@@ -321,13 +321,13 @@ export default function HomePage({ showcases }: HomePageProps) {
                       )}
                       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,5,5,0.82),rgba(5,5,5,0.36)_52%,rgba(5,5,5,0.1))]" />
                       <div className="relative flex min-h-[132px] flex-col justify-between p-4">
-                        <span className="line-clamp-2 text-[17px] font-semibold leading-snug text-[#f7f7f4] drop-shadow-[0_1px_12px_rgba(0,0,0,0.65)]">
+                        <h3 className="line-clamp-2 text-[17px] font-semibold leading-snug text-[#f7f7f4] drop-shadow-[0_1px_12px_rgba(0,0,0,0.65)]">
                           {item.label}
-                        </span>
+                        </h3>
                         {item.description ? (
-                          <span className="line-clamp-2 min-h-10 text-[12px] leading-5 text-[#d7d0c5] drop-shadow-[0_1px_10px_rgba(0,0,0,0.65)]">
+                          <p className="line-clamp-2 min-h-10 text-[12px] leading-5 text-[#d7d0c5] drop-shadow-[0_1px_10px_rgba(0,0,0,0.65)]">
                             {item.description}
-                          </span>
+                          </p>
                         ) : null}
                       </div>
                     </Link>

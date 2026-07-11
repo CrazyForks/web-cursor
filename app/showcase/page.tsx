@@ -1,17 +1,38 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
+import { SITE_OPEN_GRAPH_IMAGE, SITE_TWITTER_IMAGE } from "@/lib/site";
 import { listPublishedShowcaseCases } from "@/server/showcase";
 
 export const revalidate = 300;
 
 export async function generateMetadata(): Promise<Metadata> {
-  const t = await getTranslations("ShowcaseIndex");
+  const [t, locale] = await Promise.all([
+    getTranslations("ShowcaseIndex"),
+    getLocale(),
+  ]);
+  const title = t("metadataTitle");
+  const description = t("metadataDescription");
   return {
-    title: t("metadataTitle"),
-    description: t("metadataDescription"),
+    title,
+    description,
     alternates: {
       canonical: "/showcase",
+    },
+    openGraph: {
+      type: "website",
+      siteName: "Web Cursor",
+      locale: locale === "en" ? "en_US" : "zh_CN",
+      title,
+      description,
+      url: "/showcase",
+      images: [SITE_OPEN_GRAPH_IMAGE],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [SITE_TWITTER_IMAGE],
     },
   };
 }

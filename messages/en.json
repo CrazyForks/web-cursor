@@ -45,12 +45,12 @@
     "mainNav": "Main navigation",
     "showcase": "Showcase",
     "docs": "Docs",
-    "heroTitle": "What do you want to build?",
+    "heroTitle": "Build React apps with AI",
     "generate": "Generate",
     "featuredShowcases": "Featured showcases"
   },
   "ShowcaseIndex": {
-    "metadataTitle": "Web Cursor Showcase",
+    "metadataTitle": "Showcase",
     "metadataDescription": "Explore read-only React projects generated from real Web Cursor conversations.",
     "openWorkbench": "Open workbench",
     "eyebrow": "Showcase",
@@ -61,7 +61,7 @@
   },
   "ShowcaseDetail": {
     "notFoundTitle": "Showcase not found",
-    "metadataTitleSuffix": "Web Cursor Showcase",
+    "metadataTitleSuffix": "Showcase",
     "metadataDescription": "View the read-only Web Cursor generated showcase for {title}.",
     "openGraphDescription": "A real conversation-generated Web Cursor showcase.",
     "readOnly": "Read-only showcase",

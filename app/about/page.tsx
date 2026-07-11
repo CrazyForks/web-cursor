@@ -1,16 +1,27 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { SITE_OPEN_GRAPH_IMAGE, SITE_TWITTER_IMAGE } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "关于 Web Cursor",
+  title: "AI React 编码沙箱如何工作",
   description: "Web Cursor 是一个浏览器内 AI React Playground：自然语言生成 React 项目，在隔离 iframe 中即时预览，并把运行结果反馈给 agent loop 自动修复。",
   alternates: {
     canonical: "/about",
   },
   openGraph: {
-    title: "关于 Web Cursor",
+    type: "website",
+    siteName: "Web Cursor",
+    locale: "zh_CN",
+    title: "AI React 编码沙箱如何工作",
     description: "浏览器内 AI React 编码沙箱：生成、运行、观察、修复 React UI 的完整闭环。",
     url: "/about",
+    images: [SITE_OPEN_GRAPH_IMAGE],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "AI React 编码沙箱如何工作",
+    description: "浏览器内 AI React 编码沙箱：生成、运行、观察、修复 React UI 的完整闭环。",
+    images: [SITE_TWITTER_IMAGE],
   },
 };
 

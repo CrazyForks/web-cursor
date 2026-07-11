@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { SITE_OPEN_GRAPH_IMAGE, SITE_TWITTER_IMAGE } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "AI React Playground",
@@ -8,9 +9,19 @@ export const metadata: Metadata = {
     canonical: "/ai-react-playground",
   },
   openGraph: {
+    type: "website",
+    siteName: "Web Cursor",
+    locale: "en_US",
     title: "AI React Playground by Web Cursor",
     description: "Generate React UI with an AI agent, run it in a browser sandbox, and repair it with real preview feedback.",
     url: "/ai-react-playground",
+    images: [SITE_OPEN_GRAPH_IMAGE],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "AI React Playground by Web Cursor",
+    description: "Generate React UI with an AI agent, run it in a browser sandbox, and repair it with real preview feedback.",
+    images: [SITE_TWITTER_IMAGE],
   },
 };
 

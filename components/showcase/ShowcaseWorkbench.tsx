@@ -218,6 +218,13 @@ export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }
       return detail.title;
     }
   }, [casesT, detail.slug, detail.title]);
+  const description = useMemo(() => {
+    try {
+      return casesT(`${detail.slug}.description`);
+    } catch {
+      return detail.description ?? detailT("metadataDescription", { title });
+    }
+  }, [casesT, detail.description, detail.slug, detailT, title]);
 
   function artifactEventText(event: WebContainerRunEvent) {
     switch (event.type) {
@@ -264,6 +271,7 @@ export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }
         projName={title}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
+        titleAsHeading
         rightSlot={
           <div className="flex items-center gap-2">
             {canGenerateArtifact && (
@@ -284,6 +292,10 @@ export default function ShowcaseWorkbench({ detail }: { detail: ShowcaseDetail }
           </div>
         }
       />
+
+      <section className="flex-none border-b border-border bg-panel px-4 py-2.5">
+        <p className="text-[13px] leading-5 text-fg">{description}</p>
+      </section>
 
       <main className="flex min-h-0 flex-1">
         <section className="min-h-0 w-[380px] flex-none overflow-hidden border-r border-border">

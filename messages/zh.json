@@ -45,12 +45,12 @@
     "mainNav": "主导航",
     "showcase": "案例",
     "docs": "文档",
-    "heroTitle": "你想做什么？",
+    "heroTitle": "用 AI 构建 React 应用",
     "generate": "生成",
     "featuredShowcases": "精选案例"
   },
   "ShowcaseIndex": {
-    "metadataTitle": "Web Cursor 案例展示",
+    "metadataTitle": "案例展示",
     "metadataDescription": "查看 Web Cursor 从真实对话生成 React 项目的只读案例。",
     "openWorkbench": "打开工作台",
     "eyebrow": "Showcase",
@@ -61,7 +61,7 @@
   },
   "ShowcaseDetail": {
     "notFoundTitle": "案例不存在",
-    "metadataTitleSuffix": "Web Cursor 案例",
+    "metadataTitleSuffix": "案例",
     "metadataDescription": "查看 {title} 的只读 Web Cursor 生成案例。",
     "openGraphDescription": "Web Cursor 真实对话生成案例。",
     "readOnly": "只读案例",

@@ -1,39 +1,38 @@
 import type { MetadataRoute } from "next";
 import { SITE_URL } from "@/lib/site";
+import { listPublishedShowcaseCases } from "@/server/showcase";
 
-const LAST_MODIFIED = new Date("2026-06-30T00:00:00.000Z");
+export const revalidate = 300;
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const cases = await listPublishedShowcaseCases();
+
   return [
     {
       url: SITE_URL,
-      lastModified: LAST_MODIFIED,
       changeFrequency: "weekly",
       priority: 1,
     },
     {
       url: `${SITE_URL}/about`,
-      lastModified: LAST_MODIFIED,
       changeFrequency: "monthly",
       priority: 0.8,
     },
     {
       url: `${SITE_URL}/ai-react-playground`,
-      lastModified: LAST_MODIFIED,
       changeFrequency: "monthly",
       priority: 0.9,
     },
     {
       url: `${SITE_URL}/showcase`,
-      lastModified: LAST_MODIFIED,
       changeFrequency: "weekly",
       priority: 0.8,
     },
-    {
-      url: `${SITE_URL}/llms.txt`,
-      lastModified: LAST_MODIFIED,
-      changeFrequency: "monthly",
-      priority: 0.2,
-    },
+    ...cases.map((item) => ({
+      url: `${SITE_URL}/showcase/${encodeURIComponent(item.slug)}`,
+      lastModified: new Date(item.publishedAt),
+      changeFrequency: "monthly" as const,
+      priority: 0.7,
+    })),
   ];
 }

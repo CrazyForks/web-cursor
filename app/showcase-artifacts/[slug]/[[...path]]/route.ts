@@ -21,6 +21,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       "Content-Type": artifactFile.contentType,
       "Cache-Control": "public, max-age=31536000, immutable",
       "Cross-Origin-Resource-Policy": "cross-origin",
+      "X-Robots-Tag": "noindex, nofollow",
     },
   });
 }
