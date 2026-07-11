@@ -1,186 +1,198 @@
-# Web Cursor
+<div align="center">
 
-Web Cursor 是一个浏览器内的 AI React 编码沙箱：用户用自然语言描述页面或应用，AI 生成 React 项目，在 WebContainer 中安装依赖、启动预览，并把运行错误反馈回 agent loop 让 AI 自主修复。
+# Web Cursor — AI React Coding Sandbox
 
-它的核心目标不是只生成一段代码，而是让 AI 对运行结果负责：写代码、跑起来、读报错、再修到可用。
+Prompt → runnable React project → browser preview → runtime feedback → repair.
 
-## 当前状态
+[Live Demo](https://web-cursor-seven.vercel.app/) · [Showcase](https://web-cursor-seven.vercel.app/showcase) · [How It Works](#how-it-works)
 
-项目已经从早期原型升级为一个可持久化的多文件工作台。
+**English** · [简体中文](./README.zh-CN.md)
 
-已具备的主要能力：
+</div>
 
-- 自然语言生成 React 项目
-- Rsbuild + React 多文件项目结构
-- Monaco 文件编辑器与文件树
-- WebContainer 内真实 `npm install` / `npm run dev` 预览
-- 预览运行错误回传，用于 AI 自我修复
-- Postgres 持久化项目、文件、会话和消息
-- 首页最近项目列表
-- 项目内多会话切换，同一项目共享代码
-- 图片附件上传与视觉理解
-- 异步 AI 生图任务，生成图片落到项目资产
-- Figma OAuth 与设计检查能力
-- Showcase 只读案例页
-- 中英文界面切换
+![Web Cursor home screen](./docs/assets/web-cursor-home.png)
 
-规划中：
+Web Cursor is a browser-based AI React coding sandbox. Describe an interface in natural language and it generates a runnable, multi-file React project, starts it inside WebContainer, and uses real preview feedback to repair failures through an agent loop.
 
-- 静态站点 zip 导出，见 `docs/export-zip.md`
-- 可选后端沙箱验证，见 `docs/backend-sandbox.md`
-- 更完整的分享 / 发布链路
-- 版本与回滚
+## Why Web Cursor
 
-## 技术栈
+Most code generators stop after producing source code. Web Cursor closes the runtime loop: write the project, install its dependencies, run it in the browser, inspect errors and console output, then repair the project and run it again.
 
-- Next.js App Router
-- React 19
-- TypeScript
-- Tailwind CSS
-- Monaco Editor
-- WebContainer
-- Rsbuild 生成项目运行时
-- OpenAI SDK 兼容接口
-- Postgres / Neon
-- drizzle-orm
-- Vercel Blob
-- Zustand
-- next-intl
+## Capabilities
 
-## 架构边界
+- Generate complete Rsbuild + React projects from natural-language requests
+- Edit project files with Monaco Editor and a file tree
+- Run real `npm install` and `npm run dev` commands inside WebContainer
+- Feed preview errors and runtime results back into the AI repair loop
+- Persist projects, files, conversations, and messages in Postgres
+- Share code across multiple conversations within the same project
+- Upload images for visual understanding and generate images as project assets
+- Use Figma OAuth to inspect design data from links that include a specific `node-id`
+- Publish read-only project examples in the Showcase
+- Switch the interface between English and Chinese
 
-项目按三执行域组织：
+## How It Works
 
-| 域 | 位置 | 职责 |
+```text
+Natural-language request
+        ↓
+Agent writes a React project
+        ↓
+WebContainer installs dependencies and starts the app
+        ↓
+Preview reports render status and browser runtime errors
+        ↓
+Agent repairs the project and runs it again
+```
+
+Web Cursor is organized into three execution domains:
+
+| Domain | Location | Responsibility |
 |---|---|---|
-| A. LLM 代理域 | Next.js Route Handler | 持有 key、调用 LLM、访问数据库和 Blob |
-| B. 编排域 | 浏览器 Client Component | 编辑器、agent loop、WebContainer 编排、状态管理 |
-| C. 沙箱域 | iframe / WebContainer preview | 执行 AI 生成代码、捕获运行结果 |
+| A. LLM agent | Next.js Route Handlers | Holds API keys, calls the LLM, runs trusted server tools, and persists the transcript |
+| B. Browser orchestration | Client Components | Runs client-only preview tools, returns preview results to the server loop, and manages the workbench |
+| C. Sandbox | iframe / WebContainer preview | Executes untrusted AI-generated code and reports runtime results |
 
-可选扩展：
+An optional fourth domain is reserved for backend validation:
 
-| 域 | 位置 | 职责 |
+| Domain | Location | Responsibility |
 |---|---|---|
-| D. 后端沙箱域 | Vercel Sandbox / 外部 worker | 在独立隔离环境里执行 install/build/browser validation，并把结构化结果回传给 agent loop |
+| D. Backend sandbox | Vercel Sandbox / external worker | Runs install, build, and browser validation in isolation, then returns structured results to the agent loop |
 
-关键约束：
+Key constraints:
 
-- LLM key 不进入浏览器和 iframe。
-- AI 生成代码是不可信代码，不在 Next.js 主服务进程执行；如需后端运行，必须进入独立后端沙箱域。
-- 沙箱必须能把 `RENDER_OK`、`RUNTIME_ERROR`、`CONSOLE` 等运行结果回传给编排层。
-- 后端 API 只使用 `GET` / `POST`；写入动作通过明确 body 字段表达。
+- LLM credentials never enter the browser or preview iframe.
+- AI-generated code is untrusted and is not executed in the main Next.js server process.
+- The preview bridge reports `RENDER_OK` and `RUNTIME_ERROR` to the browser orchestration layer.
+- Internal Route Handlers use only `GET` and `POST`; write operations use explicit request-body fields.
 
-## 本地开发
+## Tech Stack
 
-安装依赖：
+| Area | Technologies |
+|---|---|
+| Application | Next.js App Router, React 19, TypeScript |
+| Interface | Tailwind CSS, Monaco Editor |
+| Project runtime | WebContainer, Rsbuild |
+| LLM integration | OpenAI SDK-compatible interface |
+| Persistence | Postgres / Neon, drizzle-orm |
+| Asset storage | Vercel Blob |
+| Client state | Zustand |
+| Internationalization | next-intl |
 
-```bash
-npm install
-```
+## Local Development
 
-启动 Next.js：
-
-```bash
-npm run dev
-```
-
-如需本地轮询异步生图任务，另开一个终端：
-
-```bash
-npm run dev:runner
-```
-
-推送数据库 schema：
+Install dependencies:
 
 ```bash
-npm run db:push
+pnpm install
 ```
 
-生产构建：
+Start the Next.js development server:
 
 ```bash
-npm run build
+pnpm dev
 ```
 
-## 环境变量
+To poll asynchronous image-generation jobs locally, start the runner in another terminal:
 
-项目依赖 `.env.local`，可从 `.env.example` 复制起步：
+```bash
+pnpm dev:runner
+```
+
+Push the database schema:
+
+```bash
+pnpm db:push
+```
+
+Create a production build:
+
+```bash
+pnpm build
+```
+
+## Environment Variables
+
+Copy the example environment file:
 
 ```bash
 cp .env.example .env.local
 ```
 
-跑通基础闭环（对话 → 写文件 → 预览）必须配置：
+The basic conversation → file generation → preview loop requires:
 
-| 变量 | 说明 |
+| Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | Postgres 连接串（Neon）。`npm run db:push` 也读它 |
-| `DEEPSEEK_API_KEY` | agent loop 与代码补全的 LLM key。baseURL 固定为 `https://api.deepseek.com`，硬编码在 `server/llm.ts`，没有对应环境变量 |
-| `BLOB_READ_WRITE_TOKEN` | Vercel Blob 读写 token，由 `@vercel/blob` SDK 直接读取 |
+| `DATABASE_URL` | Postgres connection string, typically Neon. Also used by `pnpm db:push` |
+| `DEEPSEEK_API_KEY` | LLM key used by the agent loop and code completion. The base URL is fixed to `https://api.deepseek.com` in `server/llm.ts` |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob read/write token used directly by the `@vercel/blob` SDK |
 
-按需开启的能力：
+Optional capabilities:
 
-| 变量 | 用于 | 必填性 |
+| Variable | Purpose | Required when |
 |---|---|---|
-| `YUNWU_API_KEY` | 生图（`generate_image`）与图片附件识别 | 用到才需要 |
-| `YUNWU_IMAGE_MODEL` | 覆盖默认生图模型 | 可选 |
-| `FIGMA_CLIENT_ID` / `FIGMA_CLIENT_SECRET` | Figma OAuth | 用到才需要 |
-| `FIGMA_TOKEN_ENCRYPTION_KEY` | 加密落库的 Figma token | 配了 Figma 就必填 |
-| `FIGMA_REDIRECT_URI` | 覆盖回调地址，默认按请求 origin 推导 | 可选 |
-| `FIGMA_PROVIDER` | 目前只支持 `rest` | 可选 |
-| `CRON_SECRET` / `IMAGE_RUNNER_SECRET` | 保护 `/api/image-runner`。生产未配则该接口一律 401 | 生产必填 |
-| `IMAGE_RUNNER_URL` / `IMAGE_RUNNER_INTERVAL_MS` / `IMAGE_RUNNER_BATCH_SIZE` | 本地 runner 脚本 `scripts/image-runner-dev.mjs` | 可选 |
-| `NEXT_PUBLIC_SITE_URL` | 站点绝对地址（sitemap / robots） | 可选 |
+| `YUNWU_API_KEY` | Image generation through `generate_image` and image-attachment understanding | Using either capability |
+| `YUNWU_IMAGE_MODEL` | Overrides the default image-generation model | Optional |
+| `FIGMA_CLIENT_ID` / `FIGMA_CLIENT_SECRET` | Figma OAuth | Enabling Figma integration |
+| `FIGMA_TOKEN_ENCRYPTION_KEY` | Encrypts stored Figma tokens | Figma integration is configured |
+| `FIGMA_REDIRECT_URI` | Overrides the callback URL; otherwise derived from the request origin | Optional |
+| `FIGMA_PROVIDER` | Figma provider; currently only `rest` is supported | Optional |
+| `CRON_SECRET` / `IMAGE_RUNNER_SECRET` | Protects `/api/image-runner`; the production endpoint returns `401` when neither is configured | Production image runner |
+| `IMAGE_RUNNER_URL` / `IMAGE_RUNNER_INTERVAL_MS` / `IMAGE_RUNNER_BATCH_SIZE` | Configures `scripts/image-runner-dev.mjs` | Optional |
+| `NEXT_PUBLIC_SITE_URL` | Absolute site URL used by canonical URLs, sitemap, robots metadata, social metadata, and `llms.txt` | Optional |
 
-## 目录导览
+## Project Structure
 
 ```text
 app/
   api/                         Next.js Route Handlers
-  p/[projectId]/               项目工作台路由
-  showcase/                    公开案例页
+  p/[projectId]/               Project workbench route
+  showcase/                    Public showcase pages
 
 components/
-  chat/                        对话与 AI 输出
-  editor/                      Monaco 编辑器
-  preview/                     预览面板
-  project/                     首页与项目入口
-  showcase/                    只读案例工作台
-  workbench/                   工作台布局与状态边界
+  chat/                        Conversation and AI output
+  editor/                      Monaco editor
+  preview/                     Preview panel
+  project/                     Home page and project entry points
+  showcase/                    Read-only showcase workbench
+  workbench/                   Workbench layout and state boundaries
 
 hooks/
-  useWorkbenchController.ts    工作台主编排
-  usePreview.ts                WebContainer 预览状态
-  useProjectFiles.ts           项目文件读写
-  useProjectSession.ts         项目会话恢复与切换
+  useWorkbenchController.ts    Main workbench orchestration
+  usePreview.ts                WebContainer preview state
+  useProjectFiles.ts           Project file reads and writes
+  useProjectSession.ts         Project restoration and conversation switching
 
 lib/
-  webcontainer/                WebContainer 文件挂载、运行和契约
-  *.ts                         客户端 API、类型和状态门面
+  webcontainer/                WebContainer mounting, runtime, and contracts
+  *.ts                         Client API, types, and state facades
 
 server/
-  db/                          drizzle schema 和连接
-  image/                       异步生图任务与资产存储
-  figma/                       Figma OAuth / inspect
-  tools/                       agent 工具定义与执行
+  db/                          Drizzle schema and database connection
+  image/                       Asynchronous image jobs and asset storage
+  figma/                       Figma OAuth and inspection
+  tools/                       Agent tool definitions and execution
 ```
 
-## 关键文档
+## Current Limitations
 
-- `REQUIREMENTS.md`：产品分期和需求背景
-- `docs/backend-design.md`：持久化、项目/会话/消息模型
-- `docs/backend-sandbox.md`：Vercel 部署下的后端沙箱方案、免费额度和 Cloudflare 取舍
-- `docs/frontend-transpile.md`：前端转译与执行演进
-- `docs/async-image-generation.md`：异步生图链路
-- `docs/figma-design-import.md`：Figma 导入设计
-- `docs/export-zip.md`：静态 zip 导出方案
-- `openspec/AGENTS.md`：OpenSpec 变更流程
+- Generated projects use the repository's Rsbuild + React project contract rather than arbitrary frameworks.
+- Figma inspection requires OAuth and a link containing a specific `node-id`; it is not a general Figma-to-React converter.
+- The preview bridge currently reports render success and browser runtime errors; console capture is not implemented.
+- Static-site ZIP export, backend sandbox validation, and project rollback are not implemented yet.
 
-## 开发原则
+## Roadmap
 
-- 手写 agent loop，不引入 LangChain。
-- 状态拓扑优先，顶层组件只做装配。
-- `useEffect` 只用于同步 React 外部系统，不用于普通 state 派生。
-- 字段、enum、schema 必须来自明确契约，不靠代码猜业务语义。
-- 小改动不强行补无意义测试；测试只服务真实回归风险。
-- 未经明确授权不执行 `git commit` / `git push`。
+- Static-site ZIP export
+- Optional isolated backend validation
+- A more complete sharing and publishing workflow
+- Project versions and rollback
+
+## Design Notes
+
+- [Async image generation](./docs/async-image-generation.md) — implemented asynchronous image jobs and project assets
+- [Figma design inspection](./docs/figma-design-import.md) — current OAuth and node-level inspection design
+- [Static ZIP export](./docs/export-zip.md) — planned export design
+- [Backend sandbox](./docs/backend-sandbox.md) — planned isolated validation design
+- [Requirements baseline](./REQUIREMENTS.md) — historical product baseline; some sections predate the current WebContainer and i18n implementation
+- [OpenSpec workflow](./openspec/AGENTS.md) — process for new capabilities and architecture changes
