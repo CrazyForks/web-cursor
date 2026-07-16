@@ -1,30 +1,9 @@
-<!-- OPENSPEC:START -->
-# OpenSpec Instructions
-
-These instructions are for AI assistants working in this project.
-
-Always open `@/openspec/AGENTS.md` when the request:
-- Mentions planning or proposals (words like proposal, spec, change, plan)
-- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
-- Sounds ambiguous and you need the authoritative spec before coding
-
-Use `@/openspec/AGENTS.md` to learn:
-- How to create and apply change proposals
-- Spec format and conventions
-- Project structure and guidelines
-
-Keep this managed block so 'openspec update' can refresh the instructions.
-
-<!-- OPENSPEC:END -->
-
 # Web Cursor —— 项目规范
-
-> 本块在 OPENSPEC 受管块之外,`openspec update` 不会覆盖它。
 
 ## 这是什么
 
 浏览器内的 AI React 编码沙箱(类 Web 版 Cursor):自然语言 → AI 写 React 代码 → 沙箱即时执行渲染 → AI 读运行报错自主修复。
-完整背景见 `@/openspec/project.md`,需求见 `@/REQUIREMENTS.md`,可交互原型 `prototype.html`。
+完整需求见 `@/REQUIREMENTS.md`,可交互原型 `prototype.html`。
 
 ## 三执行域(架构铁律)
 
@@ -135,7 +114,3 @@ Hook 的价值是定义状态域,不是把代码从组件里搬出去。
 
 - **未经显式授权,绝不 `git commit` / `git push`**。改完只汇报,等"提交/推送"指令。
 - 每次 commit/push 单独授权;commit 用结构化信息(WHAT/WHY/HOW)。
-
-## OpenSpec 工作流(何时用)
-
-新增能力、破坏性变更、架构调整时,先按 `@/openspec/AGENTS.md` 走变更提案(proposal → 审批 → 实现 → archive),不要直接动手写代码。小改/修 bug 可跳过。

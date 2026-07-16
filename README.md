@@ -195,4 +195,3 @@ server/
 - [Static ZIP export](./docs/export-zip.md) — planned export design
 - [Backend sandbox](./docs/backend-sandbox.md) — planned isolated validation design
 - [Requirements baseline](./REQUIREMENTS.md) — historical product baseline; some sections predate the current WebContainer and i18n implementation
-- [OpenSpec workflow](./openspec/AGENTS.md) — process for new capabilities and architecture changes

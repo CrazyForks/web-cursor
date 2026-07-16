@@ -195,4 +195,3 @@ server/
 - [静态 ZIP 导出](./docs/export-zip.md) — 规划中的导出设计
 - [后端沙箱](./docs/backend-sandbox.md) — 规划中的隔离验证设计
 - [需求基线](./REQUIREMENTS.md) — 历史产品基线；部分内容早于当前 WebContainer 与国际化实现
-- [OpenSpec 工作流](./openspec/AGENTS.md) — 新能力与架构变更流程
