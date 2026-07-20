@@ -3,19 +3,13 @@ import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import ShowcaseWorkbench from "@/components/showcase/ShowcaseWorkbench";
 import { SITE_OPEN_GRAPH_IMAGE, SITE_TWITTER_IMAGE } from "@/lib/site";
-import { getPublishedShowcaseCase, listPublishedShowcaseCases } from "@/server/showcase";
+import { getPublishedShowcaseCase } from "@/server/showcase";
 
-export const revalidate = 300;
-export const dynamicParams = true;
+export const dynamic = "force-dynamic";
 
 type PageProps = {
   params: Promise<{ slug: string }>;
 };
-
-export async function generateStaticParams() {
-  const cases = await listPublishedShowcaseCases();
-  return cases.map((item) => ({ slug: item.slug }));
-}
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;

@@ -1,8 +1,8 @@
 /**
  * [INPUT]: WebContainer project files, run event callback, or global prewarm request
- * [OUTPUT]: dev server URL, install/dev server errors, preview runtime bridge injection, or warmed WebContainer singleton
+ * [OUTPUT]: dev server URL, terminal-semantics log snapshots, install/dev server errors, preview runtime bridge injection, or warmed WebContainer singleton
  * [POS]: B 域 WebContainer runtime 单例 —— boot/mount/install/start 当前预览项目
- * [PROTOCOL]: 只在浏览器客户端调用；WebContainer 实例存在 globalThis，避免重复 boot；预热只 boot，不 mount/install/start。
+ * [PROTOCOL]: 只在浏览器客户端调用；进程输出必须保留终端原地刷新语义；预热只 boot，不 mount/install/start。
  */
 "use client";
 
@@ -67,10 +67,33 @@ function runtimeState() {
   return globalState.__webCursorWebContainerRuntime;
 }
 
-function cleanProcessOutput(text: string) {
-  return text
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/\r/g, "\n");
+function appendProcessOutput(output: string, text: string) {
+  const normalized = text
+    .replace(/\x1b\[(?:\d+)?G/g, "\r")
+    .replace(/\x1b\[[012]?K/g, "\r")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  const lines = output.split("\n");
+  let lineIndex = lines.length - 1;
+
+  for (let index = 0; index < normalized.length; index += 1) {
+    const character = normalized[index];
+    if (character === "\r") {
+      if (normalized[index + 1] !== "\n") lines[lineIndex] = "";
+      continue;
+    }
+    if (character === "\n") {
+      lines.push("");
+      lineIndex += 1;
+      continue;
+    }
+    if (character === "\b") {
+      lines[lineIndex] = lines[lineIndex].slice(0, -1);
+      continue;
+    }
+    lines[lineIndex] += character;
+  }
+
+  return lines.join("\n");
 }
 
 async function bootWebContainer(onEvent: (event: WebContainerRunEvent) => void) {
@@ -194,9 +217,8 @@ export async function runWebContainerProject({
   onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallStart });
   const install = await webcontainer.spawn("npm", ["install"]);
   void install.output.pipeTo(createLogPipe((text) => {
-    const cleanText = cleanProcessOutput(text);
-    installLog += cleanText;
-    if (cleanText) onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallLog, text: cleanText });
+    installLog = appendProcessOutput(installLog, text);
+    if (installLog) onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallLog, text: installLog });
   }));
   const installExit = await install.exit;
   if (installExit !== 0) {
@@ -217,9 +239,8 @@ export async function runWebContainerProject({
     String(WEB_CONTAINER_DEV_SERVER_PORT),
   ]);
   void state.devProcess.output.pipeTo(createLogPipe((text) => {
-    const cleanText = cleanProcessOutput(text);
-    devLog += cleanText;
-    if (cleanText) onEvent({ type: WEB_CONTAINER_RUN_EVENT.DevServerLog, text: cleanText });
+    devLog = appendProcessOutput(devLog, text);
+    if (devLog) onEvent({ type: WEB_CONTAINER_RUN_EVENT.DevServerLog, text: devLog });
   }));
 
   const exitPromise = state.devProcess.exit.then((exitCode) => {
@@ -248,9 +269,8 @@ export async function buildWebContainerStaticArtifact({
   onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallStart });
   const install = await webcontainer.spawn("npm", ["install"]);
   void install.output.pipeTo(createLogPipe((text) => {
-    const cleanText = cleanProcessOutput(text);
-    installLog += cleanText;
-    if (cleanText) onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallLog, text: cleanText });
+    installLog = appendProcessOutput(installLog, text);
+    if (installLog) onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallLog, text: installLog });
   }));
   const installExit = await install.exit;
   if (installExit !== 0) {
@@ -262,9 +282,8 @@ export async function buildWebContainerStaticArtifact({
   onEvent({ type: WEB_CONTAINER_RUN_EVENT.BuildStart });
   const build = await webcontainer.spawn("npm", ["run", "build"]);
   void build.output.pipeTo(createLogPipe((text) => {
-    const cleanText = cleanProcessOutput(text);
-    buildLog += cleanText;
-    if (cleanText) onEvent({ type: WEB_CONTAINER_RUN_EVENT.BuildLog, text: cleanText });
+    buildLog = appendProcessOutput(buildLog, text);
+    if (buildLog) onEvent({ type: WEB_CONTAINER_RUN_EVENT.BuildLog, text: buildLog });
   }));
   const buildExit = await build.exit;
   if (buildExit !== 0) {

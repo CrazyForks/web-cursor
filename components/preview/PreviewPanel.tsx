@@ -2,6 +2,7 @@
 
 import type { RefObject } from "react";
 import { useTranslations } from "next-intl";
+import Spinner from "@/components/common/Spinner";
 import type { Status, Overlay } from "@/lib/types";
 import type { PreviewRunPhase } from "@/hooks/usePreview";
 
@@ -55,7 +56,20 @@ export default function PreviewPanel({
     starting: t("starting"),
     "server-ready": t("serverReady"),
   };
-  const logText = runLogs.join("");
+  let spinnerLineIndex = -1;
+  if (refreshing) {
+    for (let index = runLogs.length - 1; index >= 0; index -= 1) {
+      if (/^[|/\\-]$/.test(runLogs[index].trim())) {
+        spinnerLineIndex = index;
+        break;
+      }
+      if (runLogs[index].trim()) break;
+    }
+  }
+  const visibleRunLogs = spinnerLineIndex === -1
+    ? runLogs
+    : runLogs.filter((_, index) => index !== spinnerLineIndex);
+  const logText = visibleRunLogs.join("\n");
 
   return (
     <div className="grid min-w-0 h-full flex-1 grid-rows-[39px_minmax(0,1fr)] bg-panel">
@@ -107,9 +121,15 @@ export default function PreviewPanel({
               <span>{t("npmDevLog")}</span>
               <span>{runLogs.length}</span>
             </div>
-            <pre className="max-h-[190px] overflow-auto whitespace-pre-wrap p-3 font-mono text-[11.5px] leading-[1.45] text-[#d7d0c2]">
-              {logText}
-            </pre>
+            <div className="max-h-[190px] overflow-auto p-3 font-mono text-[11.5px] leading-[1.45] text-[#d7d0c2]">
+              {spinnerLineIndex !== -1 && (
+                <div className="flex items-center gap-2 text-accent">
+                  <Spinner />
+                  <span>{refreshingText[previewRunPhase]}</span>
+                </div>
+              )}
+              {logText && <pre className="whitespace-pre-wrap">{logText}</pre>}
+            </div>
           </div>
         )}
 

@@ -1,8 +1,8 @@
 /**
  * [INPUT]: 项目文件读取函数 + iframe
- * [OUTPUT]: WebContainer 预览状态、错误浮层、dev server URL、runPreview
+ * [OUTPUT]: WebContainer 预览状态、终端日志快照、错误浮层、dev server URL、runPreview
  * [POS]: B 域预览执行 hook —— mount 项目到 WebContainer，运行 npm dev，并把 iframe 指向 dev server URL
- * [PROTOCOL]: 这里只处理 WebContainer run，不处理 chat/messages，也不保存文件。
+ * [PROTOCOL]: 这里只处理 WebContainer run；日志事件是完整快照，不得再次按碎片追加。
  */
 "use client";
 
@@ -60,6 +60,7 @@ export function usePreview(readProjectFiles: (projectId: string) => Promise<WebC
   const t = useTranslations("Preview");
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const runIdRef = useRef(0);
+  const installLogRef = useRef("");
   const rawDevLogRef = useRef("");
   const pendingRuntimeRef = useRef<PendingPreviewRuntime | null>(null);
 
@@ -133,14 +134,15 @@ export function usePreview(readProjectFiles: (projectId: string) => Promise<WebC
     setPreviewActive(false);
     setPreviewUrl(null);
     setRunLogs([]);
+    installLogRef.current = "";
     rawDevLogRef.current = "";
     setOverlay(EMPTY_OVERLAY);
     setStatus({ kind: "", text });
     setPreviewRunPhase("idle");
   }, [cancelPendingRuntime]);
 
-  const appendLog = useCallback((text: string) => {
-    setRunLogs((logs) => [...logs, text].slice(-120));
+  const showLogSnapshot = useCallback((text: string) => {
+    setRunLogs(text ? text.split("\n").slice(-120) : []);
   }, []);
 
   const handleRunEvent = useCallback((event: WebContainerRunEvent) => {
@@ -160,11 +162,13 @@ export function usePreview(readProjectFiles: (projectId: string) => Promise<WebC
         setStatus({ kind: "load", text: t("projectMounted") });
         break;
       case WEB_CONTAINER_RUN_EVENT.InstallStart:
+        installLogRef.current = "";
         setPreviewRunPhase("installing");
         setStatus({ kind: "load", text: t("installingDependencies") });
         break;
       case WEB_CONTAINER_RUN_EVENT.InstallLog:
-        appendLog(event.text);
+        installLogRef.current = event.text;
+        showLogSnapshot(event.text);
         break;
       case WEB_CONTAINER_RUN_EVENT.DevServerStart:
         rawDevLogRef.current = "";
@@ -172,8 +176,8 @@ export function usePreview(readProjectFiles: (projectId: string) => Promise<WebC
         setStatus({ kind: "load", text: t("startingDevServer") });
         break;
       case WEB_CONTAINER_RUN_EVENT.DevServerLog:
-        rawDevLogRef.current += event.text;
-        appendLog(event.text);
+        rawDevLogRef.current = event.text;
+        showLogSnapshot([installLogRef.current, event.text].filter(Boolean).join("\n"));
         break;
       case WEB_CONTAINER_RUN_EVENT.ServerReady:
         setPreviewRunPhase("server-ready");
@@ -183,7 +187,7 @@ export function usePreview(readProjectFiles: (projectId: string) => Promise<WebC
       case WEB_CONTAINER_RUN_EVENT.DevServerError:
         break;
     }
-  }, [appendLog, t]);
+  }, [showLogSnapshot, t]);
 
   const runPreview = useCallback(
     async (projectId: string): Promise<ToolResult | null> => {
@@ -194,6 +198,7 @@ export function usePreview(readProjectFiles: (projectId: string) => Promise<WebC
       setPreviewRunPhase("reading");
       setRunLogs([]);
       setPreviewUrl(null);
+      installLogRef.current = "";
       rawDevLogRef.current = "";
       setOverlay((current) => ({ ...current, show: false }));
       try {
