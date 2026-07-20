@@ -1,8 +1,8 @@
 /**
  * [INPUT]: image run id
- * [OUTPUT]: typed image run status from local backend
- * [POS]: B 域生图任务客户端 —— 只读取本地后端 run/job 状态，不碰 provider
- * [PROTOCOL]: 本地 API 契约由共享 TS 类型约束；这里不重复手写字段 parser
+ * [OUTPUT]: one-shot server worker trigger and typed image run status from local backend
+ * [POS]: B 域生图任务客户端 —— 只启动 A 域 worker 并读取状态，不直接推进 provider job
+ * [PROTOCOL]: start 请求必须快速返回；后续 GET 只读取数据库中的 run/job 状态
  */
 "use client";
 
@@ -16,4 +16,8 @@ export function imageRunTerminal(status: ImageRunView["status"]) {
 
 export function fetchImageRun(runId: string): Promise<ImageRunView> {
   return req<ImageRunView>("GET", `/api/image-runs/${runId}`);
+}
+
+export function startImageRunWorker(runId: string): Promise<void> {
+  return req<void>("POST", `/api/image-runs/${runId}/start`);
 }

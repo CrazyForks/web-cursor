@@ -93,11 +93,10 @@ Start the Next.js development server:
 pnpm dev
 ```
 
-To poll asynchronous image-generation jobs locally, start the runner in another terminal:
-
-```bash
-pnpm dev:runner
-```
+The active image card starts an owner-scoped server worker through
+`POST /api/image-runs/:id/start`. The request returns with `204`; the server
+polls the image provider in the background while the card reads status through
+short `GET /api/image-runs/:id` requests. No permanent polling process is required.
 
 Push the database schema:
 
@@ -137,8 +136,6 @@ Optional capabilities:
 | `FIGMA_TOKEN_ENCRYPTION_KEY` | Encrypts stored Figma tokens | Figma integration is configured |
 | `FIGMA_REDIRECT_URI` | Overrides the callback URL; otherwise derived from the request origin | Optional |
 | `FIGMA_PROVIDER` | Figma provider; currently only `rest` is supported | Optional |
-| `CRON_SECRET` / `IMAGE_RUNNER_SECRET` | Protects `/api/image-runner`; the production endpoint returns `401` when neither is configured | Production image runner |
-| `IMAGE_RUNNER_URL` / `IMAGE_RUNNER_INTERVAL_MS` / `IMAGE_RUNNER_BATCH_SIZE` | Configures `scripts/image-runner-dev.mjs` | Optional |
 | `NEXT_PUBLIC_SITE_URL` | Absolute site URL used by canonical URLs, sitemap, robots metadata, social metadata, and `llms.txt` | Optional |
 
 ## Project Structure

@@ -4,7 +4,6 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "dev:runner": "node scripts/image-runner-dev.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

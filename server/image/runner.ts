@@ -1,10 +1,10 @@
 /**
- * [INPUT]: pending/running image_jobs in DB
+ * [INPUT]: owner-scoped image run id
  * [OUTPUT]: updated image_jobs/image_runs/project_assets and closed generate_image tool result messages
- * [POS]: A 域生图 runner —— Vercel Cron/本地定时调用的无状态任务处理器
- * [PROTOCOL]: runner 只查本地库；provider 返回 URL/data URL 必须下载并写入 project_assets 后才暴露
+ * [POS]: A 域生图 runner —— 前端只负责唤醒，服务端独立轮询指定 run 直到终态
+ * [PROTOCOL]: runner 只处理 owner/runId 精确命中的 active run；provider 返回 URL/data URL 必须下载并写入 project_assets 后才暴露
  *   并发铁律：submit 和 poll 都必须先原子认领（条件 UPDATE ... RETURNING）再调 provider；
- *   run 的终态跃迁与 tool result 落库同事务提交，重叠 tick 只有一个赢家。
+ *   run 的终态跃迁与 tool result 落库同事务提交，重叠 worker 只有一个写入赢家。
  */
 import "server-only";
 import { and, asc, eq, inArray, isNull, lt, or } from "drizzle-orm";
@@ -23,7 +23,7 @@ import {
 } from "@/types/image";
 import { ToolName } from "@/types/tool";
 
-const DEFAULT_BATCH_SIZE = 4;
+const MAX_JOBS_PER_TICK = 4;
 const POLL_INTERVAL_MS = 5_000;
 const PROVIDER_TIMEOUT_MS = 5 * 60_000;
 
@@ -35,10 +35,12 @@ type RunnerJob = {
   run: ImageRunRow;
 };
 
-export type ImageRunnerTickResult = {
-  processed: number;
-  touchedRuns: number;
+export type ImageRunWorkerState = {
+  found: boolean;
+  terminal: boolean;
 };
+
+const activeWorkers = new Map<string, Promise<void>>();
 
 function nowMinus(ms: number) {
   return new Date(Date.now() - ms);
@@ -48,12 +50,36 @@ function errorOf(code: ImageJobErrorCode, message: string): ImageJobError {
   return { code, message };
 }
 
-async function pendingCandidates(limit: number): Promise<RunnerJob[]> {
+function imageRunTerminal(status: ImageRunRow["status"]): boolean {
+  return status === ImageRunStatus.Succeeded || status === ImageRunStatus.Failed;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function findOwnedRun(runId: string, ownerId: string): Promise<ImageRunRow | null> {
+  const [run] = await db
+    .select()
+    .from(imageRuns)
+    .where(and(
+      eq(imageRuns.id, runId),
+      eq(imageRuns.ownerId, ownerId),
+      isNull(imageRuns.deletedAt),
+    ))
+    .limit(1);
+  return run ?? null;
+}
+
+async function pendingCandidates(runId: string, ownerId: string, limit: number): Promise<RunnerJob[]> {
   return db
     .select({ job: imageJobs, run: imageRuns })
     .from(imageJobs)
     .innerJoin(imageRuns, eq(imageJobs.runId, imageRuns.id))
     .where(and(
+      eq(imageRuns.id, runId),
+      eq(imageRuns.ownerId, ownerId),
+      inArray(imageRuns.status, [ImageRunStatus.Pending, ImageRunStatus.Running]),
       eq(imageJobs.status, ImageJobStatus.Pending),
       isNull(imageJobs.deletedAt),
       isNull(imageRuns.deletedAt),
@@ -62,12 +88,15 @@ async function pendingCandidates(limit: number): Promise<RunnerJob[]> {
     .limit(limit);
 }
 
-async function pollCandidates(limit: number): Promise<RunnerJob[]> {
+async function pollCandidates(runId: string, ownerId: string, limit: number): Promise<RunnerJob[]> {
   return db
     .select({ job: imageJobs, run: imageRuns })
     .from(imageJobs)
     .innerJoin(imageRuns, eq(imageJobs.runId, imageRuns.id))
     .where(and(
+      eq(imageRuns.id, runId),
+      eq(imageRuns.ownerId, ownerId),
+      inArray(imageRuns.status, [ImageRunStatus.Pending, ImageRunStatus.Running]),
       eq(imageJobs.status, ImageJobStatus.Running),
       isNull(imageJobs.deletedAt),
       isNull(imageRuns.deletedAt),
@@ -78,6 +107,17 @@ async function pollCandidates(limit: number): Promise<RunnerJob[]> {
     ))
     .orderBy(asc(imageJobs.createdAt))
     .limit(limit);
+}
+
+async function claimCandidates(
+  candidates: RunnerJob[],
+  claim: (job: ImageJobRow) => Promise<ImageJobRow | null>,
+): Promise<RunnerJob[]> {
+  const claimed = await Promise.all(candidates.map(async (candidate) => {
+    const job = await claim(candidate.job);
+    return job ? { ...candidate, job } : null;
+  }));
+  return claimed.filter((candidate): candidate is RunnerJob => candidate !== null);
 }
 
 async function claimPending(job: ImageJobRow): Promise<ImageJobRow | null> {
@@ -345,35 +385,70 @@ async function refreshRunStatus(runId: string) {
   await closeRun(run, result, errors);
 }
 
-export async function runImageRunnerTick(
-  batchSize = DEFAULT_BATCH_SIZE,
-  options: { publicBaseUrl?: string } = {},
-): Promise<ImageRunnerTickResult> {
-  const touchedRunIds = new Set<string>();
-  let processed = 0;
-
-  for (const item of await pendingCandidates(batchSize)) {
-    const claimed = await claimPending(item.job);
-    if (!claimed) continue;
-    processed++;
-    touchedRunIds.add(item.run.id);
-    await submitJob(item.run, claimed, options);
-  }
-
-  for (const item of await pollCandidates(Math.max(0, batchSize - processed))) {
-    const claimed = await claimPolling(item.job);
-    if (!claimed) continue;
-    processed++;
-    touchedRunIds.add(item.run.id);
-    await pollJob(item.run, claimed, options);
-  }
-
-  for (const runId of touchedRunIds) {
-    await refreshRunStatus(runId);
-  }
-
+async function getImageRunWorkerState(
+  runId: string,
+  ownerId: string,
+): Promise<ImageRunWorkerState> {
+  const run = await findOwnedRun(runId, ownerId);
   return {
-    processed,
-    touchedRuns: touchedRunIds.size,
+    found: Boolean(run),
+    terminal: run ? imageRunTerminal(run.status) : false,
   };
+}
+
+async function runImageRunTick(
+  runId: string,
+  ownerId: string,
+  options: { publicBaseUrl?: string } = {},
+): Promise<ImageRunWorkerState> {
+  const run = await findOwnedRun(runId, ownerId);
+  if (!run) return { found: false, terminal: false };
+  if (imageRunTerminal(run.status)) {
+    return { found: true, terminal: true };
+  }
+
+  const pending = await claimCandidates(
+    await pendingCandidates(runId, ownerId, MAX_JOBS_PER_TICK),
+    claimPending,
+  );
+  await Promise.all(pending.map((item) => submitJob(item.run, item.job, options)));
+
+  const polling = await claimCandidates(
+    await pollCandidates(runId, ownerId, Math.max(0, MAX_JOBS_PER_TICK - pending.length)),
+    claimPolling,
+  );
+  await Promise.all(polling.map((item) => pollJob(item.run, item.job, options)));
+
+  const processed = pending.length + polling.length;
+  if (processed > 0) await refreshRunStatus(runId);
+  return getImageRunWorkerState(runId, ownerId);
+}
+
+async function runImageRunToTerminal(
+  runId: string,
+  ownerId: string,
+  options: { publicBaseUrl?: string },
+): Promise<void> {
+  while (true) {
+    const tick = await runImageRunTick(runId, ownerId, options);
+    if (!tick.found || tick.terminal) return;
+    await wait(POLL_INTERVAL_MS);
+  }
+}
+
+export function runImageRunWorker(
+  runId: string,
+  ownerId: string,
+  options: { publicBaseUrl?: string } = {},
+): Promise<void> {
+  const key = `${ownerId}:${runId}`;
+  const running = activeWorkers.get(key);
+  if (running) return running;
+
+  const worker = runImageRunToTerminal(runId, ownerId, options)
+    .finally(() => {
+      if (activeWorkers.get(key) === worker) activeWorkers.delete(key);
+    });
+  activeWorkers.set(key, worker);
+  return worker;
 }

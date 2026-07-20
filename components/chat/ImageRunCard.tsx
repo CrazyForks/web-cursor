@@ -3,9 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AlertCircle, CheckCircle2, ExternalLink, ImageIcon, Loader2 } from "lucide-react";
-import { fetchImageRun, imageRunTerminal } from "@/lib/imageRuns";
+import { fetchImageRun, imageRunTerminal, startImageRunWorker } from "@/lib/imageRuns";
 import type { ImageJobView, ImageRunView } from "@/lib/types";
 import { ImageJobStatus, ImageRunStatus } from "@/types/image";
+
+const STATUS_POLL_INTERVAL_MS = 2_000;
+const STATUS_RETRY_INTERVAL_MS = 3_000;
 
 function jobTitle(job: ImageJobView, index: number, fallback: string) {
   return job.input.label?.trim() || `${fallback} ${index + 1}`;
@@ -62,6 +65,7 @@ export default function ImageRunCard({ run, onResume }: { run: ImageRunView; onR
   const t = useTranslations("Chat");
   const [current, setCurrent] = useState(run);
   const terminalNotifiedRef = useRef(false);
+  const active = !imageRunTerminal(run.status);
 
   useEffect(() => {
     setCurrent(run);
@@ -70,14 +74,19 @@ export default function ImageRunCard({ run, onResume }: { run: ImageRunView; onR
   useEffect(() => {
     let disposed = false;
     let timer: number | undefined;
+    let workerStarted = false;
 
     async function tick() {
       try {
+        if (!workerStarted) {
+          await startImageRunWorker(run.runId);
+          workerStarted = true;
+        }
         const next = await fetchImageRun(run.runId);
         if (disposed) return;
         setCurrent({ ...next, resumeOnTerminal: run.resumeOnTerminal });
         if (!imageRunTerminal(next.status)) {
-          timer = window.setTimeout(tick, 2000);
+          timer = window.setTimeout(tick, STATUS_POLL_INTERVAL_MS);
           return;
         }
         if (run.resumeOnTerminal && !terminalNotifiedRef.current) {
@@ -85,19 +94,19 @@ export default function ImageRunCard({ run, onResume }: { run: ImageRunView; onR
           onResume();
         }
       } catch {
-        if (!disposed) timer = window.setTimeout(tick, 3000);
+        if (!disposed) timer = window.setTimeout(tick, STATUS_RETRY_INTERVAL_MS);
       }
     }
 
-    if (!imageRunTerminal(run.status)) {
-      timer = window.setTimeout(tick, 800);
+    if (active) {
+      timer = window.setTimeout(tick, 0);
     }
 
     return () => {
       disposed = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [onResume, run.resumeOnTerminal, run.runId, run.status]);
+  }, [active, onResume, run.resumeOnTerminal, run.runId]);
 
   const Icon = current.status === ImageRunStatus.Succeeded
     ? CheckCircle2

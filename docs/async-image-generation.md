@@ -19,7 +19,8 @@ agent 调 generate_image
   -> 服务端创建 image_runs + image_jobs 记录
   -> SSE 返回 tool_pending(runId + jobs)
   -> 当前 /api/chat 结束或暂停
-  -> 后台 worker 执行生图
+  -> 前端 POST /api/image-runs/[runId]/start 唤醒一次
+  -> Route Handler 立即返回 204，后台 worker 执行生图
   -> 生图完成后下载/解码图片
   -> 存 Vercel Blob
   -> 写 project_assets
@@ -302,7 +303,7 @@ GET /api/projects/[id]/assets
 ```text
 1. 领取 pending run 下的 pending jobs
 2. 标记 run/job running
-3. 逐个或并发调 provider 生图
+3. 每个 tick 最多领取 4 个 job，并行调用 provider 生图
 4. 获取最终图片
 5. 校验 MIME、大小和尺寸
 6. 存 Vercel Blob
@@ -321,11 +322,14 @@ GET /api/projects/[id]/assets
 4. 前端 resume 后，agent 决定重试、降级或 reply
 ```
 
-部署选择：
+部署方式：
 
-- Vercel Cron / Queue / 后台任务均可。
-- 不依赖浏览器 tab 存活。
-- job 状态必须在 DB 中可恢复。
+- 前端收到 `tool_pending` 后，只调用一次 `POST /api/image-runs/[runId]/start`。
+- Route Handler 使用 Next.js `after()`，在 `204` 响应发出后运行 owner/runId-scoped worker。
+- worker 在服务端轮询 provider，直到 run 成功、失败或函数达到平台最大执行时间。
+- 不运行每两秒扫描全表的永久进程；没有活跃任务时不会产生 runner 数据库查询。
+- 前端刷新可再次调用 start；同一实例通过 active worker map 去重，跨实例并发由 job CAS 保证写入安全。
+- job 状态必须在 DB 中可恢复；Vercel Hobby 单次后台函数最长 5 分钟，超时恢复能力不能靠浏览器长期请求伪装。
 
 ## 7. Provider 抽象
 
@@ -480,7 +484,9 @@ type ImageGenerationRunView = {
 ```text
 收到 tool_pending(runId)
   -> 前端创建 ImageGenerationRunView
-  -> 每 2 秒 GET /api/image-runs/[runId]
+  -> 一次 POST /api/image-runs/[runId]/start（返回 204）
+  -> 服务端后台轮询 provider
+  -> 前端每 2 秒 GET /api/image-runs/[runId]
   -> pending/running 时继续轮询并更新图片卡片
   -> succeeded/failed 时停止轮询
   -> 如果该 runId 尚未 resume，调用 /api/chat kind=resume
@@ -505,6 +511,7 @@ type ImageGenerationRunView = {
 
 职责边界：
 
+- 前端的 start 只唤醒服务端 worker，不提交或轮询 provider，不通过长期 pending 请求推进任务。
 - 前端只展示生成过程、缩略图和错误，不直接修改项目代码。
 - agent 只有在 worker 写入 `role=tool` 后，才能通过 resume 看到 `assets[].url`。
 - 把图片加入页面代码必须由 agent 调 `write_file` 完成，而不是前端替 agent 插入代码。

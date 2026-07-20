@@ -93,11 +93,9 @@ pnpm install
 pnpm dev
 ```
 
-如需在本地轮询异步生图任务，另开一个终端启动 runner：
-
-```bash
-pnpm dev:runner
-```
+活跃的图片卡片通过 `POST /api/image-runs/:id/start` 启动 owner-scoped
+服务端 worker。该请求返回 `204`；服务端在后台轮询图片供应商，图片卡片只通过短请求
+`GET /api/image-runs/:id` 读取状态，不需要永久运行的轮询进程。
 
 推送数据库 schema：
 
@@ -137,8 +135,6 @@ cp .env.example .env.local
 | `FIGMA_TOKEN_ENCRYPTION_KEY` | 加密保存的 Figma token | 已配置 Figma 集成时 |
 | `FIGMA_REDIRECT_URI` | 覆盖回调地址；否则根据请求 origin 推导 | 可选 |
 | `FIGMA_PROVIDER` | Figma provider；目前只支持 `rest` | 可选 |
-| `CRON_SECRET` / `IMAGE_RUNNER_SECRET` | 保护 `/api/image-runner`；生产环境未配置任一变量时接口返回 `401` | 生产生图 runner |
-| `IMAGE_RUNNER_URL` / `IMAGE_RUNNER_INTERVAL_MS` / `IMAGE_RUNNER_BATCH_SIZE` | 配置 `scripts/image-runner-dev.mjs` | 可选 |
 | `NEXT_PUBLIC_SITE_URL` | canonical、sitemap、robots、社交 metadata 与 `llms.txt` 使用的站点绝对地址 | 可选 |
 
 ## 目录结构
