@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { GenerateImageInputImageSource, ImageAspectRatio } from "./image";
+import { GitCommitInputSchema, GitLogInputSchema } from "./browserGitRepository";
+import { ProjectRevisionSchema } from "./projectRevision";
 import {
   containsUnicodeLineTerminator,
   countUnicodeCodePoints,
@@ -29,16 +31,35 @@ export const ReadFileArgsSchema = z.object({
 export const WriteFileArgsSchema = z.object({
   path: z.string().min(1),
   content: z.string(),
+  expectedRevision: ProjectRevisionSchema,
 }).strict();
 
 export const DeleteFileArgsSchema = z.object({
   path: z.string().min(1),
+  expectedRevision: ProjectRevisionSchema,
 }).strict();
 
 export const RenameFileArgsSchema = z.object({
   oldPath: z.string().min(1),
   newPath: z.string().min(1),
+  expectedRevision: ProjectRevisionSchema,
 }).strict();
+
+export const GitStatusArgsSchema = z.object({}).strict();
+
+export const GitStageArgsSchema = z.object({
+  path: z.string().min(1),
+}).strict();
+
+export const GitUnstageArgsSchema = z.object({
+  path: z.string().min(1),
+}).strict();
+
+export const GitCommitArgsSchema = GitCommitInputSchema;
+
+export const GitLogArgsSchema = GitLogInputSchema;
+
+export const GitCurrentBranchArgsSchema = z.object({}).strict();
 
 export const RunPreviewArgsSchema = z.object({}).strict();
 

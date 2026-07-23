@@ -9,7 +9,7 @@
 import { getOwnerId } from "./owner";
 import { localeHeaderName } from "@/i18n/locales";
 import type { ChatEvent, ChatTurn } from "@/types/chat";
-import type { ToolResult } from "@/types/tool";
+import type { ClientToolResultSubmission } from "@/types/clientTool";
 
 /** 调后端 /api/chat，逐条 yield SSE 事件。自带 x-owner-id；signal 中止当前后端流。 */
 export async function* streamChat(
@@ -58,14 +58,13 @@ export async function* streamChat(
 /** Close one pending model tool call. This records execution result only; it never calls the LLM. */
 export async function postToolResult(
   conversationId: string,
-  toolCallId: string,
-  result: ToolResult,
+  submission: ClientToolResultSubmission,
   signal: AbortSignal,
 ): Promise<void> {
   const res = await fetch(`/api/conversations/${conversationId}/tool-results`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-owner-id": getOwnerId() },
-    body: JSON.stringify({ toolCallId, result }),
+    body: JSON.stringify(submission),
     signal,
   });
   if (!res.ok) {

@@ -65,6 +65,7 @@ export default function EditorPanel({
   onNewFile,
   onRenameFile,
   onDeleteFile,
+  showFileExplorer = true,
 }: {
   code: string;
   files: ProjectFileSummary[];
@@ -79,6 +80,7 @@ export default function EditorPanel({
   onNewFile: (path: string) => void | Promise<void>;
   onRenameFile: (newPath: string) => void | Promise<void>;
   onDeleteFile: () => void | Promise<void>;
+  showFileExplorer?: boolean;
 }) {
   const t = useTranslations("Editor");
   const common = useTranslations("Common");
@@ -127,7 +129,7 @@ export default function EditorPanel({
 
   return (
     <div className="flex h-full min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-codebg">
-      <aside className="flex h-full w-[270px] flex-none flex-col border-r border-border bg-panel">
+      {showFileExplorer && <aside className="flex h-full w-[270px] flex-none flex-col border-r border-border bg-panel">
         <div className="h-11 flex-none flex items-center justify-between gap-2 border-b border-border bg-panel2 px-3.5 text-[12px] uppercase tracking-[0.08em] text-muted">
           <span>{t("files")}</span>
           <span className="ml-auto rounded bg-codebg px-2 py-0.5 text-[11px] tracking-normal text-muted">{files.length}</span>
@@ -181,7 +183,7 @@ export default function EditorPanel({
             </div>
           )}
         </div>
-      </aside>
+      </aside>}
 
       <section className="flex h-full min-w-0 flex-1 flex-col bg-[#11110f]">
         <div className="h-11 flex-none flex items-center gap-2 border-b border-border bg-panel px-3 text-[12px] text-muted">

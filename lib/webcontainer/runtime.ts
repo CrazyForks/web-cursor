@@ -1,8 +1,8 @@
 /**
- * [INPUT]: WebContainer project files, run event callback, or global prewarm request
- * [OUTPUT]: dev server URL, terminal-semantics log snapshots, install/dev server errors, preview runtime bridge injection, or warmed WebContainer singleton
- * [POS]: B 域 WebContainer runtime 单例 —— boot/mount/install/start 当前预览项目
- * [PROTOCOL]: 只在浏览器客户端调用；进程输出必须保留终端原地刷新语义；预热只 boot，不 mount/install/start。
+ * [INPUT]: WebContainer project files, run event callback, terminal session request, or global prewarm request
+ * [OUTPUT]: dev server URL, terminal-semantics log snapshots, install/dev server errors, preview runtime bridge injection, terminal session, or warmed singleton
+ * [POS]: B 域 WebContainer runtime 单例 —— boot/mount/install/start 当前运行镜像，并承载 jsh 终端
+ * [PROTOCOL]: ProjectRepository 是 canonical source；进程输出保留终端原地刷新语义；预热只 boot，不 mount/install/start。
  */
 "use client";
 
@@ -50,6 +50,7 @@ export type WebContainerBuildFile = {
 type WebContainerRuntimeState = {
   instancePromise: Promise<WebContainer> | null;
   devProcess: WebContainerProcess | null;
+  terminalProcess: WebContainerProcess | null;
 };
 
 type WebContainerGlobal = typeof globalThis & {
@@ -62,6 +63,7 @@ function runtimeState() {
     globalState.__webCursorWebContainerRuntime = {
       instancePromise: null,
       devProcess: null,
+      terminalProcess: null,
     };
   }
   return globalState.__webCursorWebContainerRuntime;
@@ -197,6 +199,63 @@ export async function stopWebContainerProject() {
   const state = runtimeState();
   await stopProcess(state.devProcess);
   state.devProcess = null;
+}
+
+export type WebContainerTerminalSession = {
+  write(data: string): Promise<void>;
+  resize(cols: number, rows: number): void;
+  dispose(): void;
+};
+
+type OpenWebContainerTerminalOptions = {
+  files: WebContainerProjectFile[];
+  cols: number;
+  rows: number;
+  onOutput(text: string): void;
+};
+
+function runtimeMirrorFiles(files: WebContainerProjectFile[]) {
+  return files.some((file) => file.path === "index.html")
+    ? withPreviewRuntimeBridge(files)
+    : files;
+}
+
+export async function openWebContainerTerminal({
+  files,
+  cols,
+  rows,
+  onOutput,
+}: OpenWebContainerTerminalOptions): Promise<WebContainerTerminalSession> {
+  const webcontainer = await bootWebContainer(() => undefined);
+  await webcontainer.mount(projectFilesToFileSystemTree(runtimeMirrorFiles(files)));
+
+  const state = runtimeState();
+  await stopProcess(state.terminalProcess);
+  const process = await webcontainer.spawn("jsh", {
+    terminal: { cols, rows },
+  });
+  state.terminalProcess = process;
+  const writer = process.input.getWriter();
+  void process.output.pipeTo(createLogPipe(onOutput)).catch(() => undefined);
+
+  let disposed = false;
+  return {
+    async write(data) {
+      if (disposed) return;
+      await writer.write(data);
+    },
+    resize(nextCols, nextRows) {
+      if (disposed) return;
+      process.resize({ cols: nextCols, rows: nextRows });
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      writer.releaseLock();
+      void stopProcess(process);
+      if (state.terminalProcess === process) state.terminalProcess = null;
+    },
+  };
 }
 
 export async function runWebContainerProject({

@@ -19,6 +19,7 @@ type PreviewWorkspaceProps = {
   currentProjectId?: string;
   busy: boolean;
   runPreview: (projectId: string) => Promise<unknown>;
+  compact?: boolean;
 };
 
 export default function PreviewWorkspace({
@@ -34,6 +35,7 @@ export default function PreviewWorkspace({
   currentProjectId,
   busy,
   runPreview,
+  compact = false,
 }: PreviewWorkspaceProps) {
   const viewMode = useWorkbenchStore((state) => state.viewMode);
   const setViewMode = useWorkbenchStore((state) => state.setViewMode);
@@ -47,7 +49,9 @@ export default function PreviewWorkspace({
   }
 
   return (
-    <div className={(viewMode === "preview" ? "flex" : "hidden") + " absolute inset-3 overflow-hidden rounded-xl border border-border"}>
+    <div className={(viewMode === "preview" ? "flex" : "hidden") + (compact
+      ? " absolute inset-0 overflow-hidden border border-border"
+      : " absolute inset-3 overflow-hidden rounded-xl border border-border")}>
       <PreviewPanel
         iframeRef={iframeRef}
         status={status}

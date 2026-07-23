@@ -2,22 +2,28 @@
  * [INPUT]: kind=user 的用户消息，或 kind=resume 的已闭合 transcript 续写请求
  * [OUTPUT]: SSE(init/tools_call/tool_result/tool_pending/files_changed/chat/done/error)，并落库完整 transcript
  * [POS]: A 域 LLM Agent loop —— 持 key、读 DB transcript、执行后端文件工具、流式转发
- * [PROTOCOL]: LLM 工具由 server/tools/definitions.ts 定义，由 server/tools/executor.ts 执行；
- *   文件当前态只在 project_files，不再从 assistant message 恢复代码。
+ * [PROTOCOL]: Database 文件工具由 server executor 执行；Browser Git 文件工具整轮交给 client 严格回传；
+ *   两种 storage 都只从 active ProjectRepository 读取当前态，不从 assistant message 恢复代码。
  */
 import { toLLMMessages } from "@/server/context";
 import type { ChatCompletionCreateParamsStreaming } from "openai/resources/chat/completions";
 import { defaultLocale, isAppLocale, localeHeaderName, type AppLocale } from "@/i18n/locales";
 import { db } from "@/server/db";
 import { conversations, projects } from "@/server/db/schema";
-import llmClient, { systemPromptForLocale, tools } from "@/server/llm";
+import llmClient, { systemPromptForLocale } from "@/server/llm";
+import { toolsForStorageKind } from "@/server/tools/definitions";
 import { getOwnedConversationProjectId, ownsConversation, ownsProject } from "@/server/guard";
 import { ownerIdFrom } from "@/server/owner";
 import { appendMessage, listMessages } from "@/server/messages";
 import { attachToConversation, AttachmentError } from "@/server/attachments";
 import { closeInterruptedToolCall } from "@/server/toolCalls";
 import { makeInitialTitle, updateGeneratedTitlesFromUserMessage } from "@/server/titles";
-import { executeToolCall, type ToolExecutionContext } from "@/server/tools/executor";
+import {
+  executeToolCall,
+  ToolExecutionErrorCode,
+  type ToolExecutionContext,
+  type ToolExecutionResult,
+} from "@/server/tools/executor";
 import { maybeAppendFigmaConnectionGate } from "@/server/integrations/figmaGate";
 import { AGENT_MODEL } from "@/server/models";
 import { ChatEventType, ChatTurnSchema, type ChatEvent, type ChatTurn } from "@/types/chat";
@@ -26,6 +32,15 @@ import type { AttachmentSummary } from "@/types/attachment";
 import type { IntegrationCardMeta } from "@/types/integration";
 import { ToolName, ToolResultType, type ToolCallMeta } from "@/types/tool";
 import { extractWriteFileStreamUpdate, type WriteFileStreamState } from "@/server/writeFileStream";
+import {
+  ProjectStorageKind,
+  ProjectStorageKindSchema,
+  type ProjectStorageKind as ProjectStorageKindValue,
+} from "@/types/projectStorage";
+import type { ProjectRepositoryDescriptor } from "@/types/projectRepository";
+import { toProjectRepositoryDescriptor } from "@/server/projectResponse";
+import { and, eq, isNull } from "drizzle-orm";
+import { ClientToolCallSchema, clientToolRunsInBrowser } from "@/types/clientTool";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,15 +74,20 @@ function requestLocale(req: Request): AppLocale | Response {
   return Response.json({ error: "bad request", detail: `Invalid ${localeHeaderName}` }, { status: 400 });
 }
 
-function assistantMessages(rows: DbMessage[], locale: AppLocale) {
-  return [{ role: "system" as const, content: systemPromptForLocale(locale) }, ...toLLMMessages(rows)];
+function assistantMessages(rows: DbMessage[], locale: AppLocale, storageKind: ProjectStorageKindValue) {
+  return [{ role: "system" as const, content: systemPromptForLocale(locale, storageKind) }, ...toLLMMessages(rows)];
 }
 
-async function requestAssistant(rows: DbMessage[], locale: AppLocale, signal: AbortSignal) {
+async function requestAssistant(
+  rows: DbMessage[],
+  locale: AppLocale,
+  storageKind: ProjectStorageKindValue,
+  signal: AbortSignal,
+) {
   const params: DeepSeekStreamingParams = {
-    messages: assistantMessages(rows, locale),
+    messages: assistantMessages(rows, locale, storageKind),
     model: AGENT_MODEL,
-    tools,
+    tools: toolsForStorageKind(storageKind),
     tool_choice: "auto",
     stream: true,
     thinking: { type: "disabled" },
@@ -78,10 +98,11 @@ async function requestAssistant(rows: DbMessage[], locale: AppLocale, signal: Ab
 async function collectAssistantTurn(
   rows: DbMessage[],
   locale: AppLocale,
+  storageKind: ProjectStorageKindValue,
   send: (event: ChatEvent) => void,
   signal: AbortSignal,
 ): Promise<{ text: string; toolCalls: ToolCallMeta[] }> {
-  const stream = await requestAssistant(rows, locale, signal);
+  const stream = await requestAssistant(rows, locale, storageKind, signal);
   const toolCalls = new Map<number, ToolCallMeta>();
   const writeFileStreams = new Map<number, WriteFileStreamState>();
   let text = "";
@@ -138,12 +159,6 @@ async function collectAssistantTurn(
   };
 }
 
-const CLIENT_EXECUTION_TOOLS = [ToolName.RunPreview] as const;
-
-function toolRunsOnClient(name: string) {
-  return CLIENT_EXECUTION_TOOLS.includes(name as (typeof CLIENT_EXECUTION_TOOLS)[number]);
-}
-
 function fileChangedEvent(
   result: Awaited<ReturnType<typeof executeToolCall>>,
 ): Extract<ChatEvent, { type: typeof ChatEventType.FilesChanged }> | null {
@@ -170,7 +185,9 @@ async function runAgentLoop({
   ownerId,
   conversationId,
   projectId,
+  storageKind,
   created,
+  initRepository,
   userMessage,
   locale,
   send,
@@ -179,13 +196,18 @@ async function runAgentLoop({
   ownerId: string;
   conversationId: string;
   projectId: string;
+  storageKind: ProjectStorageKindValue;
   created: boolean;
+  initRepository?: ProjectRepositoryDescriptor;
   userMessage?: string;
   locale: AppLocale;
   send: (event: ChatEvent) => void;
   signal: AbortSignal;
 }) {
-  if (created) send({ type: ChatEventType.Init, conversationId, projectId });
+  if (created) {
+    if (!initRepository) throw new Error("Missing repository descriptor for new conversation.");
+    send({ type: ChatEventType.Init, conversationId, repository: initRepository });
+  }
   if (userMessage) {
     try {
       const titleUpdate = await updateGeneratedTitlesFromUserMessage({
@@ -204,7 +226,7 @@ async function runAgentLoop({
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     signal.throwIfAborted();
     const rows = await listMessages(conversationId);
-    const assistant = await collectAssistantTurn(rows, locale, send, signal);
+    const assistant = await collectAssistantTurn(rows, locale, storageKind, send, signal);
     signal.throwIfAborted();
 
     if (assistant.toolCalls.length === 0) {
@@ -227,6 +249,40 @@ async function runAgentLoop({
       meta: { toolCalls: assistant.toolCalls },
     });
 
+    const clientExecution = assistant.toolCalls.map((toolCall) =>
+      clientToolRunsInBrowser(toolCall.name, storageKind)
+    );
+    const hasClientTool = clientExecution.some(Boolean);
+    const hasServerTool = clientExecution.some((runsOnClient) => !runsOnClient);
+    if (hasClientTool && hasServerTool) {
+      const message = "A tool-call round cannot mix browser-executed and server-executed tools.";
+      for (const toolCall of assistant.toolCalls) {
+        const result: ToolExecutionResult = {
+          status: "error",
+          tool: toolCall.name,
+          code: ToolExecutionErrorCode.BadArgs,
+          message,
+        };
+        await appendMessage(conversationId, {
+          role: "tool",
+          content: JSON.stringify(result),
+          meta: { toolCallId: toolCall.id },
+        });
+        send({ type: ChatEventType.ToolResult, name: toolCall.name, status: "error" });
+      }
+      continue;
+    }
+
+    if (hasClientTool) {
+      const calls = assistant.toolCalls.map((toolCall) => ClientToolCallSchema.parse({
+        id: toolCall.id,
+        name: toolCall.name,
+        arguments: toolCall.arguments ?? "{}",
+      }));
+      send({ type: ChatEventType.ClientToolCalls, calls });
+      return;
+    }
+
     const ctx: ToolExecutionContext = {
       ownerId,
       projectId,
@@ -235,16 +291,6 @@ async function runAgentLoop({
 
     for (const toolCall of assistant.toolCalls) {
       signal.throwIfAborted();
-      if (toolRunsOnClient(toolCall.name)) {
-        send({
-          type: ChatEventType.ToolsCall,
-          index: 0,
-          id: toolCall.id,
-          name: toolCall.name,
-        });
-        return;
-      }
-
       const result = await executeToolCall(toolCall, ctx);
       if (result.status === "pending" && result.tool === ToolName.GenerateImage) {
         send({
@@ -276,15 +322,19 @@ async function runAgentLoop({
 }
 
 async function closeTailToolCallBeforeModelInput(conversationId: string) {
-  const rows = await listMessages(conversationId);
-  await closeInterruptedToolCall(conversationId, rows);
+  let rows = await listMessages(conversationId);
+  while (await closeInterruptedToolCall(conversationId, rows)) {
+    rows = await listMessages(conversationId);
+  }
 }
 
 function streamAgent(args: {
   conversationId: string;
   projectId: string;
+  storageKind: ProjectStorageKindValue;
   ownerId: string;
   created: boolean;
+  initRepository?: ProjectRepositoryDescriptor;
   userMessage?: string;
   locale: AppLocale;
 }, requestSignal: AbortSignal) {
@@ -326,6 +376,7 @@ function streamStaticAssistant(args: {
   conversationId: string;
   projectId: string;
   created: boolean;
+  initRepository?: ProjectRepositoryDescriptor;
   content: string;
   integrationCard?: IntegrationCardMeta;
 }) {
@@ -337,7 +388,14 @@ function streamStaticAssistant(args: {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
 
-      if (args.created) send({ type: ChatEventType.Init, conversationId: args.conversationId, projectId: args.projectId });
+      if (args.created) {
+        if (!args.initRepository) throw new Error("Missing repository descriptor for new conversation.");
+        send({
+          type: ChatEventType.Init,
+          conversationId: args.conversationId,
+          repository: args.initRepository,
+        });
+      }
       send({ type: ChatEventType.Chat, delta: args.content });
       if (args.integrationCard) {
         send({ type: ChatEventType.IntegrationCard, meta: args.integrationCard });
@@ -423,13 +481,23 @@ export async function POST(req: Request) {
   if (body.kind === "resume") {
     const projectId = await getOwnedConversationProjectId(body.conversationId, ownerId);
     if (!projectId) return new Response("Not Found", { status: 404 });
+    const [project] = await db.select().from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.ownerId, ownerId), isNull(projects.deletedAt)))
+      .limit(1);
+    if (!project) return new Response("Not Found", { status: 404 });
+    const storageKind = ProjectStorageKindSchema.parse(project.storageKind);
     await closeTailToolCallBeforeModelInput(body.conversationId);
-    return streamAgent({ conversationId: body.conversationId, projectId, ownerId, created: false, locale }, req.signal);
+    return streamAgent({ conversationId: body.conversationId, projectId, storageKind, ownerId, created: false, locale }, req.signal);
   }
 
   if (body.kind === "preview_feedback") {
     const projectId = await getOwnedConversationProjectId(body.conversationId, ownerId);
     if (!projectId) return new Response("Not Found", { status: 404 });
+    const [project] = await db.select().from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.ownerId, ownerId), isNull(projects.deletedAt)))
+      .limit(1);
+    if (!project) return new Response("Not Found", { status: 404 });
+    const storageKind = ProjectStorageKindSchema.parse(project.storageKind);
 
     await closeTailToolCallBeforeModelInput(body.conversationId);
     await appendMessage(body.conversationId, {
@@ -438,7 +506,7 @@ export async function POST(req: Request) {
       meta: { previewResult: body.result },
     });
 
-    return streamAgent({ conversationId: body.conversationId, projectId, ownerId, created: false, locale }, req.signal);
+    return streamAgent({ conversationId: body.conversationId, projectId, storageKind, ownerId, created: false, locale }, req.signal);
   }
 
   let { conversationId, projectId } = body;
@@ -458,12 +526,30 @@ export async function POST(req: Request) {
         return new Response("Not Found", { status: 404 });
       }
     } else {
-      const [project] = await db.insert(projects).values({ ownerId, title: initialTitle }).returning();
+      // Compatibility path until the homepage creates projects explicitly before starting chat.
+      const [project] = await db.insert(projects).values({
+        ownerId,
+        title: initialTitle,
+        storageKind: ProjectStorageKind.Database,
+      }).returning();
       projectId = project.id;
     }
     const [conversation] = await db.insert(conversations).values({ projectId, title: initialTitle }).returning();
     conversationId = conversation.id;
   }
+
+  const [project] = await db.select().from(projects)
+    .where(and(
+      eq(projects.id, projectId),
+      eq(projects.ownerId, ownerId),
+      isNull(projects.deletedAt),
+    ))
+    .limit(1);
+  if (!project) return new Response("Not Found", { status: 404 });
+  const storageKind = ProjectStorageKindSchema.parse(project.storageKind);
+  const initRepository: ProjectRepositoryDescriptor | undefined = created
+    ? toProjectRepositoryDescriptor(project)
+    : undefined;
 
   let attachments: AttachmentSummary[] | undefined;
   const attachmentIds = body.attachments?.map((attachment) => attachment.id) ?? [];
@@ -497,10 +583,20 @@ export async function POST(req: Request) {
       conversationId,
       projectId,
       created,
+      initRepository,
       content: figmaGate.content,
       integrationCard: figmaGate.meta,
     });
   }
 
-  return streamAgent({ conversationId, projectId, ownerId, created, userMessage: body.message, locale }, req.signal);
+  return streamAgent({
+    conversationId,
+    projectId,
+    storageKind,
+    ownerId,
+    created,
+    initRepository,
+    userMessage: body.message,
+    locale,
+  }, req.signal);
 }

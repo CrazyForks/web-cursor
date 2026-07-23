@@ -17,6 +17,7 @@ type ConversationSidebarProps = {
   onSend: (text: string, attachments?: SendAttachment[]) => void;
   onResume: () => void;
   onStop: () => void;
+  placement?: "left" | "right";
 };
 
 export default function ConversationSidebar({
@@ -30,12 +31,16 @@ export default function ConversationSidebar({
   onSend,
   onResume,
   onStop,
+  placement = "left",
 }: ConversationSidebarProps) {
   const t = useTranslations("Workbench");
   const locale = useLocale();
 
   return (
-    <div className="flex h-full w-[380px] flex-none flex-col border-r border-border bg-panel">
+    <div className={
+      "flex h-full w-[380px] flex-none flex-col bg-panel " +
+      (placement === "right" ? "border-l border-border" : "border-r border-border")
+    }>
       <div className="h-9 flex-none flex items-center justify-between gap-2 px-[14px] border-b border-border text-[12px] text-muted uppercase tracking-[0.06em]">
         <span>{t("conversationThreads")}</span>
         <button

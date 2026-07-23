@@ -10,25 +10,12 @@ import { db } from "@/server/db";
 import { imageRuns } from "@/server/db/schema";
 import { appendMessage, listMessages } from "./messages";
 import { ToolName, ToolResultType, type ToolCallMeta } from "@/types/tool";
+import { findNextPendingToolCall } from "@/lib/pendingToolCall";
 
 type DbMessage = Awaited<ReturnType<typeof listMessages>>[number];
 
 export function findUnclosedToolCall(rows: DbMessage[]): ToolCallMeta | null {
-  const closed = new Set<string>();
-  for (const row of rows) {
-    const meta = (row.meta ?? {}) as { toolCallId?: string };
-    if (row.role === "tool" && meta.toolCallId) closed.add(meta.toolCallId);
-  }
-
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const row = rows[i];
-    const meta = (row.meta ?? {}) as { toolCalls?: ToolCallMeta[] };
-    if (row.role === "assistant" && meta.toolCalls?.length) {
-      return meta.toolCalls.find((toolCall) => !closed.has(toolCall.id)) ?? null;
-    }
-  }
-
-  return null;
+  return findNextPendingToolCall(rows);
 }
 
 export async function closeInterruptedToolCall(conversationId: string, rows: DbMessage[]) {

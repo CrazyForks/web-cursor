@@ -18,6 +18,7 @@ type EditorWorkspaceProps = {
   onNewFile: (path: string) => void;
   onRenameFile: (path: string) => void;
   onDeleteFile: () => void;
+  compact?: boolean;
 };
 
 export default function EditorWorkspace({
@@ -34,6 +35,7 @@ export default function EditorWorkspace({
   onNewFile,
   onRenameFile,
   onDeleteFile,
+  compact = false,
 }: EditorWorkspaceProps) {
   const viewMode = useWorkbenchStore((state) => state.viewMode);
   const setViewMode = useWorkbenchStore((state) => state.setViewMode);
@@ -49,7 +51,10 @@ export default function EditorWorkspace({
   }
 
   return (
-    <div className={(viewMode === "code" ? "flex" : "hidden") + " absolute inset-3"}>
+    <div
+      data-testid="editor-workspace"
+      className={(viewMode === "code" ? "flex" : "hidden") + (compact ? " absolute inset-0" : " absolute inset-3")}
+    >
       <EditorPanel
         code={code}
         files={files}
@@ -64,6 +69,7 @@ export default function EditorWorkspace({
         onNewFile={newFileInCode}
         onRenameFile={onRenameFile}
         onDeleteFile={onDeleteFile}
+        showFileExplorer={!compact}
       />
     </div>
   );

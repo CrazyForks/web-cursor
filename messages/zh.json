@@ -32,6 +32,8 @@
     "title": "我的项目",
     "description": "项目保存一份代码库；项目下的多条会话线索共享当前代码。",
     "newProject": "新建项目",
+    "newDatabaseProject": "新建数据库项目",
+    "newBrowserGitProject": "新建 Browser Git 项目",
     "openProject": "打开项目查看历史会话和最后代码"
   },
   "Home": {
@@ -47,6 +49,13 @@
     "docs": "文档",
     "heroTitle": "用 AI 构建 React 应用",
     "generate": "生成",
+    "storageLabel": "项目存储",
+    "databaseStorage": "Database",
+    "browserGitStorage": "Browser Git",
+    "databaseStorageDescription": "代码保存在服务端数据库",
+    "browserGitStorageDescription": "代码与 Git 历史只保存在当前浏览器",
+    "browserGitWarning": "本地存储：清除站点数据、换浏览器或换设备后无法恢复。",
+    "browserGitProvisionFailed": "Browser Git 项目初始化失败",
     "featuredShowcases": "精选案例"
   },
   "ShowcaseIndex": {
@@ -100,7 +109,24 @@
     "conversationThreads": "对话线索",
     "newConversation": "新会话",
     "emptyHistory": "当前项目还没有历史会话。直接在下方输入，后端会懒建会话。",
-    "untitledConversation": "未命名会话"
+    "untitledConversation": "未命名会话",
+    "localRepositoryMissingTitle": "当前浏览器中找不到这个 Git 仓库",
+    "localRepositoryMissingDescription": "项目记录仍然存在，但源码只保存在创建它的浏览器站点数据中。本应用不会创建空仓库或回退到数据库来伪装恢复成功。",
+    "projectLoadFailedTitle": "项目加载失败",
+    "workspaceLoadFailedTitle": "项目工作区加载失败",
+    "retryProject": "重试",
+    "storageLabel": "当前源码存储：{storage}",
+    "storageDatabase": "Database",
+    "storageBrowserGit": "浏览器 Git",
+    "migrateToBrowserGit": "转换为浏览器 Git",
+    "migrationTitle": "将项目转换为浏览器 Git",
+    "migrationDescription": "现有文件会原样导入当前浏览器并创建初始 Git commit。成功后 Database 文件将不再读写；清除站点数据、换浏览器或设备都无法恢复，本期不提供云端同步。",
+    "gitAuthorName": "Git 作者姓名",
+    "gitAuthorEmail": "Git 作者邮箱",
+    "cancelMigration": "取消",
+    "confirmMigration": "确认转换",
+    "migrating": "正在转换…",
+    "migrationSucceeded": "项目已转换为浏览器 Git"
   },
   "Chat": {
     "title": "AI 对话 · Agent",

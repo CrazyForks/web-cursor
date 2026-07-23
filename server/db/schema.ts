@@ -2,7 +2,7 @@
  * [INPUT]: 无（纯表定义）
  * [OUTPUT]: drizzle 表对象，供 lib/db/index.ts 与各 Route Handler import
  * [POS]: A 域持久层 schema —— Cursor 模型：项目=共享代码库，项目下多条对话线索
- *   关系：projects 1—N {project_files(共享代码), conversations 1—N messages(各线索的聊天)}
+ *   关系：projects 1—N {project_files(共享代码), conversations 1—N messages}
  * [PROTOCOL]: 改表先改这里 + 跑 pnpm db:push
  *   - 代码(project_files)挂项目、**会话间共享**：切会话只换聊天记录，代码不随会话变
  *   - seq 用 identity（多实例防竞态，禁 MAX+1）
@@ -25,11 +25,18 @@ import type {
   ImageRunStatus,
 } from "../../types/image";
 import type { ShowcaseArtifactStatus } from "../../types/showcaseArtifact";
+import { ProjectStorageKind, type ProjectStorageKind as ProjectStorageKindValue } from "../../types/projectStorage";
 
 export const projects = pgTable("projects", {
   id: uuid("id").primaryKey().defaultRandom(),
   ownerId: text("owner_id").notNull(),
   title: text("title").notNull(),
+  // Explicit schema default backfills legacy rows. Application requests must still provide this field.
+  storageKind: text("storage_kind")
+    .$type<ProjectStorageKindValue>()
+    .notNull()
+    .default(ProjectStorageKind.Database),
+  codeRevision: bigint("code_revision", { mode: "number" }).notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),     // 软删：null=存活

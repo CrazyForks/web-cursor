@@ -1,40 +1,89 @@
+import { z } from "zod";
 import type { ImageRunView } from "@/lib/types";
 import type { AttachmentSummary } from "@/types/attachment";
+import {
+  ProjectFileSummarySchema,
+  type ProjectFileContent,
+  type ProjectFileSummary,
+} from "@/types/projectRepository";
+import { ProjectRevisionSchema } from "@/types/projectRevision";
+import { ProjectStorageKind } from "@/types/projectStorage";
+export { FileContentAction } from "@/types/projectFileMutation";
+export type { ProjectFileContent, ProjectFileSummary } from "@/types/projectRepository";
 
-export type Project = {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt?: string;
+const ProjectBaseShape = {
+  id: z.string().uuid(),
+  title: z.string().min(1),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
 };
 
-export type Conversation = {
-  id: string;
-  projectId: string;
-  title: string | null;
-  createdAt: string;
-};
+export const DatabaseProjectSchema = z.object({
+  ...ProjectBaseShape,
+  storageKind: z.literal(ProjectStorageKind.Database),
+  codeRevision: ProjectRevisionSchema,
+}).strict();
 
-export type ProjectFileSummary = {
-  path: string;
-  updatedAt: string;
-};
+export const BrowserGitProjectSchema = z.object({
+  ...ProjectBaseShape,
+  storageKind: z.literal(ProjectStorageKind.BrowserGit),
+}).strict();
 
-export type ProjectFileContent = ProjectFileSummary & {
-  content: string;
-};
+export const ProjectSchema = z.discriminatedUnion("storageKind", [
+  DatabaseProjectSchema,
+  BrowserGitProjectSchema,
+]);
 
-export type ProjectDetail = Project & {
-  conversations: Conversation[];
-  files: ProjectFileSummary[];
-};
+export type DatabaseProject = z.infer<typeof DatabaseProjectSchema>;
+export type BrowserGitProject = z.infer<typeof BrowserGitProjectSchema>;
+export type Project = z.infer<typeof ProjectSchema>;
 
-export const FileContentAction = {
-  Write: "write",
-  Delete: "delete",
-} as const;
+export const ConversationSchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  title: z.string().nullable(),
+  createdAt: z.string().datetime(),
+}).strict();
 
-export type FileContentAction = typeof FileContentAction[keyof typeof FileContentAction];
+export type Conversation = z.infer<typeof ConversationSchema>;
+
+export const DatabaseProjectDetailSchema = DatabaseProjectSchema.extend({
+  conversations: z.array(ConversationSchema),
+  files: z.array(ProjectFileSummarySchema),
+}).strict();
+
+export const BrowserGitProjectDetailSchema = BrowserGitProjectSchema.extend({
+  conversations: z.array(ConversationSchema),
+}).strict();
+
+export const ProjectDetailSchema = z.discriminatedUnion("storageKind", [
+  DatabaseProjectDetailSchema,
+  BrowserGitProjectDetailSchema,
+]);
+
+export const ProjectListSchema = z.array(ProjectSchema);
+export const CreatedProjectResponseSchema = z.union([
+  ProjectSchema,
+  z.array(ProjectSchema).min(1),
+]);
+
+export type DatabaseProjectDetail = z.infer<typeof DatabaseProjectDetailSchema>;
+export type BrowserGitProjectDetail = z.infer<typeof BrowserGitProjectDetailSchema>;
+export type ProjectDetail = z.infer<typeof ProjectDetailSchema>;
+
+export type RepositoryProjectRef =
+  | {
+      id: string;
+      title: string;
+      storageKind: typeof ProjectStorageKind.Database;
+      codeRevision: number;
+      files?: ProjectFileSummary[];
+    }
+  | {
+      id: string;
+      title: string;
+      storageKind: typeof ProjectStorageKind.BrowserGit;
+    };
 
 export type StoredMessage = {
   id: string;
@@ -59,6 +108,7 @@ export function formatTime(value?: string, locale = "zh") {
   });
 }
 
-export function normalizeCreatedProject(value: Project | Project[]): Project {
-  return Array.isArray(value) ? value[0] : value;
+export function normalizeCreatedProject(value: unknown): Project {
+  const parsed = CreatedProjectResponseSchema.parse(value);
+  return Array.isArray(parsed) ? parsed[0] : parsed;
 }

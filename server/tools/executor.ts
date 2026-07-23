@@ -14,7 +14,7 @@ import {
   deleteProjectFile,
   FileOperationError,
   FileOperationErrorCode,
-  listProjectFiles,
+  listProjectFilesSnapshot,
   readProjectFile,
   renameProjectFile,
   searchProjectFiles,
@@ -24,6 +24,12 @@ import {
 import {
   DeleteFileArgsSchema,
   GenerateImageArgsSchema,
+  GitCommitArgsSchema,
+  GitCurrentBranchArgsSchema,
+  GitLogArgsSchema,
+  GitStageArgsSchema,
+  GitStatusArgsSchema,
+  GitUnstageArgsSchema,
   InspectAttachmentArgsSchema,
   InspectFigmaDesignArgsSchema,
   ListFilesArgsSchema,
@@ -44,9 +50,12 @@ export type ToolExecutionContext = {
 export const ToolExecutionErrorCode = {
   BadArgs: "BAD_ARGS",
   BadPath: FileOperationErrorCode.BadPath,
+  BadRevision: FileOperationErrorCode.BadRevision,
   BadSearchQuery: FileOperationErrorCode.BadSearchQuery,
   NotFound: FileOperationErrorCode.NotFound,
   Conflict: FileOperationErrorCode.Conflict,
+  RevisionConflict: FileOperationErrorCode.RevisionConflict,
+  StorageMismatch: FileOperationErrorCode.StorageMismatch,
   Unsupported: AttachmentErrorCode.Unsupported,
   InternalError: FileOperationErrorCode.InternalError,
   FigmaNotConnected: FigmaErrorCode.NotConnected,
@@ -65,12 +74,12 @@ export type ToolExecutionErrorCode =
   typeof ToolExecutionErrorCode[keyof typeof ToolExecutionErrorCode];
 
 export type ToolExecutionResult =
-  | { status: "ok"; tool: typeof ToolName.ListFiles; files: { path: string; updatedAt?: string }[] }
+  | { status: "ok"; tool: typeof ToolName.ListFiles; revision: number; files: { path: string; updatedAt?: string }[] }
   | ({ status: "ok"; tool: typeof ToolName.SearchText; query: string } & ProjectTextSearchResult)
-  | { status: "ok"; tool: typeof ToolName.ReadFile; path: string; content: string; updatedAt?: string }
-  | { status: "ok"; tool: typeof ToolName.WriteFile; path: string; updatedAt?: string }
-  | { status: "ok"; tool: typeof ToolName.DeleteFile; path: string }
-  | { status: "ok"; tool: typeof ToolName.RenameFile; oldPath: string; newPath: string; updatedAt?: string }
+  | { status: "ok"; tool: typeof ToolName.ReadFile; revision: number; path: string; content: string; updatedAt?: string }
+  | { status: "ok"; tool: typeof ToolName.WriteFile; revision: number; path: string; updatedAt?: string }
+  | { status: "ok"; tool: typeof ToolName.DeleteFile; revision: number; path: string }
+  | { status: "ok"; tool: typeof ToolName.RenameFile; revision: number; oldPath: string; newPath: string; updatedAt?: string }
   | {
       status: "ok";
       tool: typeof ToolName.InspectAttachment;
@@ -112,8 +121,8 @@ export async function executeToolCall(
     switch (tool) {
       case ToolName.ListFiles: {
         ListFilesArgsSchema.parse(parseArgs(toolCall.arguments));
-        const files = await listProjectFiles(ctx.projectId);
-        return { status: "ok", tool, files };
+        const snapshot = await listProjectFilesSnapshot(ctx.projectId);
+        return { status: "ok", tool, ...snapshot };
       }
       case ToolName.SearchText: {
         const args = SearchTextArgsSchema.parse(parseArgs(toolCall.arguments));
@@ -127,18 +136,59 @@ export async function executeToolCall(
       }
       case ToolName.WriteFile: {
         const args = WriteFileArgsSchema.parse(parseArgs(toolCall.arguments));
-        const file = await writeProjectFile(ctx.projectId, args.path, args.content);
-        return { status: "ok", tool, path: file.path, updatedAt: file.updatedAt };
+        const file = await writeProjectFile(
+          ctx.projectId,
+          args.path,
+          args.content,
+          args.expectedRevision,
+        );
+        return { status: "ok", tool, path: file.path, updatedAt: file.updatedAt, revision: file.revision };
       }
       case ToolName.DeleteFile: {
         const args = DeleteFileArgsSchema.parse(parseArgs(toolCall.arguments));
-        await deleteProjectFile(ctx.projectId, args.path);
-        return { status: "ok", tool, path: args.path };
+        const result = await deleteProjectFile(ctx.projectId, args.path, args.expectedRevision);
+        return { status: "ok", tool, path: args.path, revision: result.revision };
       }
       case ToolName.RenameFile: {
         const args = RenameFileArgsSchema.parse(parseArgs(toolCall.arguments));
-        const file = await renameProjectFile(ctx.projectId, args.oldPath, args.newPath);
-        return { status: "ok", tool, oldPath: args.oldPath, newPath: file.path, updatedAt: file.updatedAt };
+        const file = await renameProjectFile(
+          ctx.projectId,
+          args.oldPath,
+          args.newPath,
+          args.expectedRevision,
+        );
+        return {
+          status: "ok",
+          tool,
+          oldPath: args.oldPath,
+          newPath: file.path,
+          updatedAt: file.updatedAt,
+          revision: file.revision,
+        };
+      }
+      case ToolName.GitStatus: {
+        GitStatusArgsSchema.parse(parseArgs(toolCall.arguments));
+        return errorResult(tool, ToolExecutionErrorCode.Unsupported, "git_status must be executed by a Browser Git client.");
+      }
+      case ToolName.GitStage: {
+        GitStageArgsSchema.parse(parseArgs(toolCall.arguments));
+        return errorResult(tool, ToolExecutionErrorCode.Unsupported, "git_stage must be executed by a Browser Git client.");
+      }
+      case ToolName.GitUnstage: {
+        GitUnstageArgsSchema.parse(parseArgs(toolCall.arguments));
+        return errorResult(tool, ToolExecutionErrorCode.Unsupported, "git_unstage must be executed by a Browser Git client.");
+      }
+      case ToolName.GitCommit: {
+        GitCommitArgsSchema.parse(parseArgs(toolCall.arguments));
+        return errorResult(tool, ToolExecutionErrorCode.Unsupported, "git_commit must be executed by a Browser Git client.");
+      }
+      case ToolName.GitLog: {
+        GitLogArgsSchema.parse(parseArgs(toolCall.arguments));
+        return errorResult(tool, ToolExecutionErrorCode.Unsupported, "git_log must be executed by a Browser Git client.");
+      }
+      case ToolName.GitCurrentBranch: {
+        GitCurrentBranchArgsSchema.parse(parseArgs(toolCall.arguments));
+        return errorResult(tool, ToolExecutionErrorCode.Unsupported, "git_current_branch must be executed by a Browser Git client.");
       }
       case ToolName.RunPreview: {
         RunPreviewArgsSchema.parse(parseArgs(toolCall.arguments));

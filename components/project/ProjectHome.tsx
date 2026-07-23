@@ -6,37 +6,66 @@
  */
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { req } from "@/lib/api";
 import type { Project } from "@/lib/projectTypes";
 import { formatTime, normalizeCreatedProject } from "@/lib/projectTypes";
+import { createBrowserGitProject } from "@/lib/projectCreation/client";
 import TopBar from "@/components/common/TopBar";
 import Toast from "@/components/common/Toast";
+import { ProjectStorageKind, type ProjectStorageKind as ProjectStorageKindValue } from "@/types/projectStorage";
+import { ProjectRepositoryError, ProjectRepositoryErrorCode } from "@/types/projectRepository";
 
 export default function ProjectHome({ initialProjects }: { initialProjects: Project[] }) {
   const router = useRouter();
   const t = useTranslations("ProjectHome");
+  const home = useTranslations("Home");
   const common = useTranslations("Common");
   const locale = useLocale();
   const [projects, setProjects] = useState(initialProjects);
   const [toast, setToast] = useState("");
+  const [creatingStorage, setCreatingStorage] = useState<ProjectStorageKindValue | null>(null);
+  const pendingBrowserProjectIdRef = useRef<string | null>(null);
 
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(""), 1900);
   }
 
-  const createProject = useCallback(async () => {
+  const createProject = useCallback(async (storageKind: ProjectStorageKindValue) => {
+    if (creatingStorage) return;
+    setCreatingStorage(storageKind);
     try {
-      const project = normalizeCreatedProject(await req<Project | Project[]>("POST", "/api/projects", { title: "untitled" }));
+      const title = "untitled";
+      const id = storageKind === ProjectStorageKind.BrowserGit
+        ? pendingBrowserProjectIdRef.current ?? crypto.randomUUID()
+        : undefined;
+      if (id) {
+        pendingBrowserProjectIdRef.current = id;
+      }
+      const project = id
+        ? await createBrowserGitProject(id, title)
+        : normalizeCreatedProject(await req<unknown>("POST", "/api/projects", {
+            title,
+            storageKind,
+          }));
+      if (!id && (project.title !== title || project.storageKind !== storageKind)) {
+        throw new ProjectRepositoryError(
+          ProjectRepositoryErrorCode.ProtocolViolation,
+          "Create project response does not match the requested storage contract.",
+        );
+      }
+      if (id) pendingBrowserProjectIdRef.current = null;
       setProjects((prev) => [project, ...prev.filter((p) => p.id !== project.id)]);
       router.push(`/p/${project.id}`);
     } catch (e) {
       showToast(String(e instanceof Error ? e.message : e));
+    } finally {
+      setCreatingStorage(null);
     }
-  }, [router]);
+  }, [creatingStorage, router]);
 
   return (
     <div className="h-screen flex flex-col">
@@ -54,12 +83,23 @@ export default function ProjectHome({ initialProjects }: { initialProjects: Proj
                 {t("description")}
               </p>
             </div>
-            <button
-              className="rounded-lg border border-accent bg-accent px-4 py-2.5 text-[13px] font-medium text-white transition hover:bg-[#d04200]"
-              onClick={createProject}
-            >
-              ＋ {t("newProject")}
-            </button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                className="rounded-lg border border-border bg-panel px-4 py-2.5 text-[13px] font-medium text-fg transition hover:border-accent disabled:cursor-wait disabled:opacity-50"
+                onClick={() => void createProject(ProjectStorageKind.Database)}
+                disabled={creatingStorage !== null}
+              >
+                ＋ {t("newDatabaseProject")}
+              </button>
+              <button
+                className="rounded-lg border border-accent bg-accent px-4 py-2.5 text-[13px] font-medium text-white transition hover:bg-[#d04200] disabled:cursor-wait disabled:opacity-50"
+                onClick={() => void createProject(ProjectStorageKind.BrowserGit)}
+                disabled={creatingStorage !== null}
+                title={home("browserGitWarning")}
+              >
+                ＋ {t("newBrowserGitProject")}
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">

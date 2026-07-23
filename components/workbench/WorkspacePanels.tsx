@@ -41,14 +41,16 @@ export type PreviewWorkspaceModel = {
 type WorkspacePanelsProps = {
   editor: EditorWorkspaceModel;
   preview: PreviewWorkspaceModel;
+  compact?: boolean;
 };
 
 export default function WorkspacePanels({
   editor,
   preview,
+  compact = false,
 }: WorkspacePanelsProps) {
   return (
-    <div className="relative min-w-0 flex-1 bg-bg p-3">
+    <div className={"relative h-full min-w-0 flex-1 bg-bg " + (compact ? "" : "p-3")}>
       <EditorWorkspace
         code={editor.code}
         files={editor.files}
@@ -63,6 +65,7 @@ export default function WorkspacePanels({
         onNewFile={editor.onNewFile}
         onRenameFile={editor.onRenameFile}
         onDeleteFile={editor.onDeleteFile}
+        compact={compact}
       />
       <PreviewWorkspace
         iframeRef={preview.iframeRef}
@@ -77,6 +80,7 @@ export default function WorkspacePanels({
         currentProjectId={preview.currentProjectId}
         busy={preview.busy}
         runPreview={preview.runPreview}
+        compact={compact}
       />
     </div>
   );

@@ -1,26 +1,24 @@
 /**
- * [INPUT]: project id + {oldPath,newPath} + x-owner-id
- * [OUTPUT]: renamed file summary
+ * [INPUT]: project id + {oldPath,newPath,expectedRevision} + x-owner-id
+ * [OUTPUT]: renamed file summary 与新 project revision
  * [POS]: A 域文件 REST API —— 前端重命名/移动单文件
- * [PROTOCOL]: 冲突直接 409，不自动改名
+ * [PROTOCOL]: path/revision 冲突直接 409，不自动改名或覆盖
  */
 import { z } from "zod";
 import { ownsProject } from "@/server/guard";
 import { ownerIdFrom } from "@/server/owner";
 import { FileOperationError, FileOperationErrorCode, renameProjectFile } from "@/server/files";
+import { RenameProjectFileBodySchema } from "@/types/projectFileMutation";
 
 type Ctx = { params: Promise<{ id: string }> };
-
-const RenameBodySchema = z.object({
-  oldPath: z.string().min(1),
-  newPath: z.string().min(1),
-}).strict();
 
 function fileError(error: unknown) {
   if (error instanceof FileOperationError) {
     const status = error.code === FileOperationErrorCode.NotFound
       ? 404
       : error.code === FileOperationErrorCode.Conflict
+        || error.code === FileOperationErrorCode.RevisionConflict
+        || error.code === FileOperationErrorCode.StorageMismatch
         ? 409
         : 400;
     return Response.json({ error: error.message, code: error.code }, { status });
@@ -38,8 +36,13 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   try {
-    const body = RenameBodySchema.parse(await req.json());
-    return Response.json(await renameProjectFile(id, body.oldPath, body.newPath));
+    const body = RenameProjectFileBodySchema.parse(await req.json());
+    return Response.json(await renameProjectFile(
+      id,
+      body.oldPath,
+      body.newPath,
+      body.expectedRevision,
+    ));
   } catch (error) {
     if (error instanceof z.ZodError) {
       return Response.json({ error: "bad request", detail: error.flatten() }, { status: 400 });

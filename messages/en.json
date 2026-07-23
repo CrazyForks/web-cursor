@@ -32,6 +32,8 @@
     "title": "My projects",
     "description": "Each project stores one codebase. Multiple conversation threads in a project share the current code.",
     "newProject": "New project",
+    "newDatabaseProject": "New database project",
+    "newBrowserGitProject": "New Browser Git project",
     "openProject": "Open the project to view conversation history and the latest code"
   },
   "Home": {
@@ -47,6 +49,13 @@
     "docs": "Docs",
     "heroTitle": "Build React apps with AI",
     "generate": "Generate",
+    "storageLabel": "Project storage",
+    "databaseStorage": "Database",
+    "browserGitStorage": "Browser Git",
+    "databaseStorageDescription": "Code is stored in the server database",
+    "browserGitStorageDescription": "Code and Git history stay only in this browser",
+    "browserGitWarning": "Local only: clearing site data or switching browser/device makes this repository unavailable.",
+    "browserGitProvisionFailed": "Browser Git project initialization failed",
     "featuredShowcases": "Featured showcases"
   },
   "ShowcaseIndex": {
@@ -100,7 +109,24 @@
     "conversationThreads": "Conversation threads",
     "newConversation": "New chat",
     "emptyHistory": "This project has no conversation history yet. Type below to create one lazily.",
-    "untitledConversation": "Untitled chat"
+    "untitledConversation": "Untitled chat",
+    "localRepositoryMissingTitle": "This Git repository is not available in this browser",
+    "localRepositoryMissingDescription": "The project record still exists, but its source only lives in the site data of the browser that created it. The app will not create an empty repository or fall back to the database.",
+    "projectLoadFailedTitle": "Failed to load project",
+    "workspaceLoadFailedTitle": "Failed to load project workspace",
+    "retryProject": "Retry",
+    "storageLabel": "Source storage: {storage}",
+    "storageDatabase": "Database",
+    "storageBrowserGit": "Browser Git",
+    "migrateToBrowserGit": "Convert to Browser Git",
+    "migrationTitle": "Convert this project to Browser Git",
+    "migrationDescription": "Existing files will be imported exactly into this browser and committed to Git. After activation, Database files are no longer read or written. Clearing site data or changing browser/device loses the repository; cloud sync is not included.",
+    "gitAuthorName": "Git author name",
+    "gitAuthorEmail": "Git author email",
+    "cancelMigration": "Cancel",
+    "confirmMigration": "Convert",
+    "migrating": "Converting…",
+    "migrationSucceeded": "Project converted to Browser Git"
   },
   "Chat": {
     "title": "AI chat · Agent",

@@ -14,14 +14,30 @@ import { AiTimelineItemKind } from "@/lib/types";
 import type { AgentFileChange, AiTimelineItem, ImageRunView, Message, SendAttachment, Status } from "@/lib/types";
 import type { ProjectFileSummary } from "@/lib/projectTypes";
 import type { ChatEvent, ChatTurn } from "@/types/chat";
-import { ChatEventType } from "@/types/chat";
+import { ChatEventType, FileChangeOperation } from "@/types/chat";
 import { ImageJobStatus, ImageRunStatus } from "@/types/image";
 import { isIntegrationCardMeta } from "@/types/integration";
 import { ToolName, ToolResultType, type ToolResult } from "@/types/tool";
 import { AttachmentSummarySchema } from "@/types/attachment";
+import {
+  ProjectRepositoryDescriptorSchema,
+  type ProjectRepositoryDescriptor,
+} from "@/types/projectRepository";
+import {
+  ClientFileToolCallSchema,
+  ClientGitToolCallSchema,
+  ClientToolCallSchema,
+  ClientToolResultSubmissionSchema,
+  isClientFileToolName,
+  type ClientFileToolCall,
+  type ClientFileToolResult,
+  type ClientGitToolCall,
+  type ClientGitToolResult,
+  type ClientToolCall,
+} from "@/types/clientTool";
 
 const APP_ENTRY_PATH = "src/App.tsx";
-const MAX_CLIENT_TOOL_RESUMES = 8;
+const MAX_CLIENT_TOOL_RESUMES = 24;
 
 type StoredMessage = {
   id: string;
@@ -42,13 +58,18 @@ const RestoredAttachmentSchema = AttachmentSummarySchema.array();
 
 type UseChatDeps = {
   loadFiles: (projectId: string, preferredPath?: string) => Promise<ProjectFileSummary[]>;
+  executeClientFileTool: (projectId: string, call: ClientFileToolCall) => Promise<ClientFileToolResult>;
+  executeClientGitTool: (projectId: string, call: ClientGitToolCall) => Promise<ClientGitToolResult>;
   handlePersistedFileChange: (
     ev: Extract<ChatEvent, { type: typeof ChatEventType.FilesChanged }>
   ) => Promise<{ projectId: string; shouldRunPreview: boolean } | null>;
   runPreview: (projectId: string) => Promise<ToolResult | null>;
   setPreviewStatus: (status: Status) => void;
   onError: (error: unknown) => void;
-  onProjectInitialized: (project: { projectId: string; conversationId: string }) => void;
+  onProjectInitialized: (project: {
+    repository: ProjectRepositoryDescriptor;
+    conversationId: string;
+  }) => void;
   onTitleUpdate: (update: { conversationId: string; title: string; projectTitle?: string }) => void;
 };
 
@@ -75,6 +96,27 @@ function previewSummary(
 
 function interruptedPreviewResult(message: string): ToolResult {
   return { status: "error", type: ToolResultType.ToolInterrupted, message };
+}
+
+function clientFileChangedEvent(
+  result: ClientFileToolResult,
+): Extract<ChatEvent, { type: typeof ChatEventType.FilesChanged }> | null {
+  if (result.status !== "ok") return null;
+  if (result.tool === ToolName.WriteFile) {
+    return { type: ChatEventType.FilesChanged, operation: FileChangeOperation.Write, path: result.path };
+  }
+  if (result.tool === ToolName.DeleteFile) {
+    return { type: ChatEventType.FilesChanged, operation: FileChangeOperation.Delete, path: result.path };
+  }
+  if (result.tool === ToolName.RenameFile) {
+    return {
+      type: ChatEventType.FilesChanged,
+      operation: FileChangeOperation.Rename,
+      path: result.newPath,
+      oldPath: result.oldPath,
+    };
+  }
+  return null;
 }
 
 function setAgentActivity(text: string) {
@@ -111,6 +153,8 @@ export function useChat(deps: UseChatDeps) {
   const projectIdRef = useRef<string | undefined>(undefined);
   const convIdRef = useRef<string | undefined>(undefined);
   const timelineOrderRef = useRef(0);
+  const clientToolResultCacheRef = useRef(new Map<string, Promise<ClientFileToolResult>>());
+  const clientGitToolResultCacheRef = useRef(new Map<string, Promise<ClientGitToolResult>>());
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [writing, setWriting] = useState(false);
@@ -282,24 +326,31 @@ export function useChat(deps: UseChatDeps) {
       deps.setPreviewStatus({ kind: "load", text: t("modifyingFiles") });
       setAgentActivity(t("modifyingFiles"));
 
+      let pendingFilesChanged = false;
+      let pendingShouldRunPreview = false;
+      let pendingFilesChangedProjectId: string | null = null;
+
       async function consumeTurn(currentTurn: ChatTurn) {
         let filesChanged = false;
         let shouldRunPreviewForFilesChanged = false;
         let filesChangedProjectId: string | null = null;
-        let previewToolCallId: string | null = null;
+        let clientToolCalls: ClientToolCall[] = [];
 
         for await (const ev of streamChat(currentTurn, locale, signal)) {
-          if (signal.aborted) return { filesChanged, previewToolCallId, aborted: true };
+          if (signal.aborted) return { filesChanged, clientToolCalls, aborted: true };
 
           if (ev.type === ChatEventType.Init) {
-            projectIdRef.current = ev.projectId;
+            const repository = ProjectRepositoryDescriptorSchema.parse(ev.repository);
+            projectIdRef.current = repository.projectId;
             convIdRef.current = ev.conversationId;
-            setCurrentProjectId(ev.projectId);
+            setCurrentProjectId(repository.projectId);
             setCurrentConversationId(ev.conversationId);
-            deps.onProjectInitialized({ projectId: ev.projectId, conversationId: ev.conversationId });
+            deps.onProjectInitialized({
+              repository,
+              conversationId: ev.conversationId,
+            });
           } else if (ev.type === ChatEventType.ToolsCall) {
             if (ev.name === ToolName.RunPreview) {
-              previewToolCallId = ev.id;
               deps.setPreviewStatus({ kind: "load", text: t("runningPreview") });
               setAgentActivity(t("runningPreview"));
             } else if (ev.name === ToolName.WriteFile || ev.name === ToolName.DeleteFile || ev.name === ToolName.RenameFile) {
@@ -313,6 +364,11 @@ export function useChat(deps: UseChatDeps) {
               deps.setPreviewStatus({ kind: "load", text: t("readingFiles") });
               setAgentActivity(t("readingFiles"));
             }
+          } else if (ev.type === ChatEventType.ClientToolCalls) {
+            if (clientToolCalls.length > 0) {
+              throw new Error("PROTOCOL_VIOLATION: received more than one client tool boundary in a turn.");
+            }
+            clientToolCalls = ClientToolCallSchema.array().parse(ev.calls);
           } else if (ev.type === ChatEventType.ToolResult) {
             if (ev.status === "error") {
               deps.setPreviewStatus({ kind: "err", text: t("toolFailed", { name: ev.name }) });
@@ -408,7 +464,7 @@ export function useChat(deps: UseChatDeps) {
           filesChanged,
           shouldRunPreviewForFilesChanged,
           filesChangedProjectId,
-          previewToolCallId,
+          clientToolCalls,
           aborted: false,
         };
       }
@@ -418,14 +474,18 @@ export function useChat(deps: UseChatDeps) {
           const result = await consumeTurn(turn);
           if (result.aborted || signal.aborted) return;
 
-          if (!result.previewToolCallId) {
+          pendingFilesChanged ||= result.filesChanged;
+          pendingShouldRunPreview ||= Boolean(result.shouldRunPreviewForFilesChanged);
+          pendingFilesChangedProjectId = result.filesChangedProjectId ?? pendingFilesChangedProjectId;
+
+          if (result.clientToolCalls.length === 0) {
             collapseFileWriteStreams();
-            if (result.filesChanged) {
-              const preview = result.shouldRunPreviewForFilesChanged && result.filesChangedProjectId
-                ? await deps.runPreview(result.filesChangedProjectId)
+            if (pendingFilesChanged) {
+              const preview = pendingShouldRunPreview && pendingFilesChangedProjectId
+                ? await deps.runPreview(pendingFilesChangedProjectId)
                 : null;
               if (signal.aborted) return;
-              const summary = previewSummary(preview, Boolean(result.shouldRunPreviewForFilesChanged), t);
+              const summary = previewSummary(preview, pendingShouldRunPreview, t);
               updateAi((m) => ({
                 ...m,
                 summaryKind: summary.summaryKind,
@@ -453,26 +513,102 @@ export function useChat(deps: UseChatDeps) {
             throw new Error(t("missingConversation"));
           }
 
-          if (result.filesChanged) {
+          if (pendingFilesChanged) {
             await deps.loadFiles(projectId, APP_ENTRY_PATH);
           }
 
-          const preview = await deps.runPreview(projectId);
-          if (signal.aborted) return;
-          await postToolResult(
-            conversationId,
-            result.previewToolCallId,
-            preview ?? interruptedPreviewResult(t("previewNoResult")),
-            signal,
-          );
-          if (signal.aborted) return;
+          for (const call of result.clientToolCalls) {
+            if (signal.aborted) return;
 
-          const previewPassed = previewSucceeded(preview);
-          deps.setPreviewStatus({
-            kind: "load",
-            text: previewPassed ? t("previewOkSummarizing") : t("previewErrorFixing"),
-          });
-          setAgentActivity(previewPassed ? t("previewOkSummarizing") : t("previewErrorFixing"));
+            if (call.name === ToolName.RunPreview) {
+              deps.setPreviewStatus({ kind: "load", text: t("runningPreview") });
+              setAgentActivity(t("runningPreview"));
+              const preview = await deps.runPreview(projectId);
+              if (signal.aborted) return;
+              const submission = ClientToolResultSubmissionSchema.parse({
+                projectId,
+                toolCallId: call.id,
+                tool: ToolName.RunPreview,
+                result: preview ?? interruptedPreviewResult(t("previewNoResult")),
+              });
+              await postToolResult(conversationId, submission, signal);
+              if (signal.aborted) return;
+
+              const previewPassed = previewSucceeded(preview);
+              deps.setPreviewStatus({
+                kind: "load",
+                text: previewPassed ? t("previewOkSummarizing") : t("previewErrorFixing"),
+              });
+              setAgentActivity(previewPassed ? t("previewOkSummarizing") : t("previewErrorFixing"));
+              pendingFilesChanged = false;
+              pendingShouldRunPreview = false;
+              pendingFilesChangedProjectId = null;
+              continue;
+            }
+
+            if (isClientFileToolName(call.name)) {
+              const fileCall = ClientFileToolCallSchema.parse(call);
+              const cacheKey = `${conversationId}:${fileCall.id}`;
+              let execution = clientToolResultCacheRef.current.get(cacheKey);
+              if (!execution) {
+                execution = deps.executeClientFileTool(projectId, fileCall);
+                clientToolResultCacheRef.current.set(cacheKey, execution);
+              }
+              const fileResult = await execution;
+              if (signal.aborted) return;
+
+              if (fileResult.status === "error") {
+                deps.setPreviewStatus({ kind: "err", text: t("toolFailed", { name: fileResult.tool }) });
+                setAgentActivity(t("toolFailedHandling", { name: fileResult.tool }));
+              }
+
+              const changedEvent = clientFileChangedEvent(fileResult);
+              if (changedEvent?.path && changedEvent.operation) {
+                appendFileChange({
+                  operation: changedEvent.operation,
+                  path: changedEvent.path,
+                  oldPath: changedEvent.oldPath,
+                }, markTimeline());
+                const handled = await deps.handlePersistedFileChange(changedEvent);
+                if (handled) {
+                  pendingFilesChanged = true;
+                  pendingShouldRunPreview ||= handled.shouldRunPreview;
+                  pendingFilesChangedProjectId = handled.projectId;
+                }
+              }
+
+              const submission = ClientToolResultSubmissionSchema.parse({
+                projectId,
+                toolCallId: fileCall.id,
+                tool: fileCall.name,
+                result: fileResult,
+              });
+              await postToolResult(conversationId, submission, signal);
+              continue;
+            }
+
+            const gitCall = ClientGitToolCallSchema.parse(call);
+            const cacheKey = `${conversationId}:${gitCall.id}`;
+            let execution = clientGitToolResultCacheRef.current.get(cacheKey);
+            if (!execution) {
+              execution = deps.executeClientGitTool(projectId, gitCall);
+              clientGitToolResultCacheRef.current.set(cacheKey, execution);
+            }
+            const gitResult = await execution;
+            if (signal.aborted) return;
+            if (gitResult.status === "error") {
+              deps.setPreviewStatus({ kind: "err", text: t("toolFailed", { name: gitResult.tool }) });
+              setAgentActivity(t("toolFailedHandling", { name: gitResult.tool }));
+            }
+            const submission = ClientToolResultSubmissionSchema.parse({
+              projectId,
+              toolCallId: gitCall.id,
+              tool: gitCall.name,
+              result: gitResult,
+            });
+            await postToolResult(conversationId, submission, signal);
+          }
+          if (signal.aborted) return;
           turn = { kind: "resume", conversationId };
         }
 

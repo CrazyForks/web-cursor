@@ -1,7 +1,8 @@
 /**
- * [INPUT]: GET 取项目详情；POST 改名 / 软删（只用 get/post，不用 PATCH/DELETE）
- * [OUTPUT]: 项目 + 它的会话线索 / 更新后的项目
- * [POS]: A 域项目 CRUD（读 + 更新）。代码不在这（本期"当前代码"从 messages 取）
+ * [INPUT]: GET 取项目详情；POST 保留既有改名 / 软删契约
+ * [OUTPUT]: storage-discriminated project detail / 更新后的项目元数据
+ * [POS]: A 域项目详情与既有 metadata update 入口；Browser Git 迁移使用独立 action route
+ * [PROTOCOL]: 不从 Browser Git 项目回退读取 project_files；本文件不再新增其他 POST action 分支
  */
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
@@ -9,6 +10,8 @@ import { db } from "@/server/db";
 import { conversations, projects } from "@/server/db/schema";
 import { listProjectFiles } from "@/server/files";
 import { ownerIdFrom } from "@/server/owner";
+import { toConversationResponse, toProjectResponse } from "@/server/projectResponse";
+import { ProjectStorageKind } from "@/types/projectStorage";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -27,12 +30,17 @@ export async function GET(req: Request, ctx: Ctx) {
     .where(and(eq(conversations.projectId, id), isNull(conversations.deletedAt)))
     .orderBy(asc(conversations.createdAt));
 
-  const files = await listProjectFiles(id);
+  const projectResponse = toProjectResponse(project);
+  const conversationResponses = convs.map(toConversationResponse);
+  if (projectResponse.storageKind === ProjectStorageKind.Database) {
+    const files = await listProjectFiles(id);
+    return Response.json({ ...projectResponse, conversations: conversationResponses, files });
+  }
 
-  return Response.json({ ...project, conversations: convs, files });
+  return Response.json({ ...projectResponse, conversations: conversationResponses });
 }
 
-// 更新项目：{ title } 改名；{ deleted: true } 软删。owner 进 where，改不到即 404。
+// 既有兼容契约：{ title } 改名；{ deleted: true } 软删。本次只迁出新增的 Browser Git migration action。
 const UpdateSchema = z.object({
   title: z.string().min(1).optional(),
   deleted: z.boolean().optional(),
@@ -53,16 +61,16 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const patch: Record<string, unknown> = { updatedAt: new Date() };
   if (parsed.data.title !== undefined) patch.title = parsed.data.title;
-  if (parsed.data.deleted) patch.deletedAt = new Date();   // 软删项目即可：其会话/消息经 project 归属判定不可达
+  if (parsed.data.deleted) patch.deletedAt = new Date();
 
   try {
     const [row] = await db.update(projects).set(patch)
       .where(and(eq(projects.id, id), eq(projects.ownerId, ownerId), isNull(projects.deletedAt)))
       .returning();
     if (!row) return Response.json({ error: "not found" }, { status: 404 });
-    return Response.json(row);
-  } catch (e) {
-    console.error("Failed to update project", e);
+    return Response.json(toProjectResponse(row));
+  } catch (error) {
+    console.error("Failed to update project", error);
     return Response.json({ error: "internal error" }, { status: 500 });
   }
 }

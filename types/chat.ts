@@ -4,6 +4,9 @@ import { ToolResultSchema } from "./toolSchema";
 import type { PendingImageJob } from "./image";
 import type { IntegrationCardMeta } from "./integration";
 import { ToolName, type ToolName as ToolNameType } from "./tool";
+import { ProjectFileOperation } from "./projectFileMutation";
+import type { ProjectRepositoryDescriptor } from "./projectRepository";
+import type { ClientToolCall } from "./clientTool";
 
 export const ChatTurnSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -31,6 +34,7 @@ export const ChatEventType = {
   Code: "code",
   Chat: "chat",
   ToolsCall: "tools_call",
+  ClientToolCalls: "client_tool_calls",
   FileWriteStream: "file_write_stream",
   ToolResult: "tool_result",
   ToolPending: "tool_pending",
@@ -43,21 +47,22 @@ export const ChatEventType = {
 
 export type ChatEventType = typeof ChatEventType[keyof typeof ChatEventType];
 
-export const FileChangeOperation = {
-  Write: "write",
-  Delete: "delete",
-  Rename: "rename",
-} as const;
+export const FileChangeOperation = ProjectFileOperation;
 
 export type FileChangeOperation =
   typeof FileChangeOperation[keyof typeof FileChangeOperation];
 
 export type ChatEvent =
-  | { type: typeof ChatEventType.Init; conversationId: string; projectId: string }
+  | {
+      type: typeof ChatEventType.Init;
+      conversationId: string;
+      repository: ProjectRepositoryDescriptor;
+    }
   // 旧前端仍会处理 code；新后端不再发送，等前端切到 files/tool events 后删除。
   | { type: typeof ChatEventType.Code; delta: string }
   | { type: typeof ChatEventType.Chat; delta: string }
   | { type: typeof ChatEventType.ToolsCall; index: number; name: ToolNameType | string; id: string }
+  | { type: typeof ChatEventType.ClientToolCalls; calls: ClientToolCall[] }
   | { type: typeof ChatEventType.FileWriteStream; toolCallId: string; path?: string; delta?: string }
   | { type: typeof ChatEventType.ToolResult; name: ToolNameType | string; status: "ok" | "error" }
   | {

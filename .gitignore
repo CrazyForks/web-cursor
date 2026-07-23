@@ -20,3 +20,7 @@ public/esbuild.wasm
 
 # ts 构建缓存
 tsconfig.tsbuildinfo
+
+# browser tests
+test-results/
+playwright-report/
