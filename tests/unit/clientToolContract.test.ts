@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  TranscriptProtocolError,
+  TranscriptProtocolErrorCode,
+} from "../../lib/agent/fullContextAssembler";
+import {
   ClientGitToolResultSchema,
   ClientToolResultSubmissionSchema,
   clientToolRunsInBrowser,
@@ -97,6 +101,32 @@ describe("ClientToolResultSubmissionSchema", () => {
       },
     })).toThrow();
   });
+
+  it.each([
+    {
+      tool: ToolName.SearchText,
+      code: "BAD_SEARCH_QUERY",
+    },
+    {
+      tool: ToolName.GitCommit,
+      code: "GIT_AUTHOR_REQUIRED",
+    },
+  ])("rejects $code when the browser $tool writer cannot emit it", ({
+    tool,
+    code,
+  }) => {
+    expect(() => ClientToolResultSubmissionSchema.parse({
+      projectId,
+      toolCallId: `call-${tool}`,
+      tool,
+      result: {
+        status: "error",
+        tool,
+        code,
+        message: "invalid result contract",
+      },
+    })).toThrow();
+  });
 });
 
 describe("findNextPendingToolCall", () => {
@@ -106,23 +136,76 @@ describe("findNextPendingToolCall", () => {
   ];
 
   it("requires tool results in assistant call order", () => {
-    const assistant = { role: "assistant", meta: { toolCalls: calls } };
+    const assistant = {
+      role: "assistant",
+      content: "",
+      meta: { toolCalls: calls },
+    };
     expect(findNextPendingToolCall([assistant]))?.toMatchObject({ id: "call-a" });
     expect(findNextPendingToolCall([
       assistant,
-      { role: "tool", meta: { toolCallId: "call-a" } },
+      {
+        role: "tool",
+        content: JSON.stringify({
+          status: "ok",
+          tool: ToolName.ListFiles,
+          revision: 0,
+          files: [],
+        }),
+        meta: { toolCallId: "call-a" },
+      },
     ]))?.toMatchObject({ id: "call-b" });
-    expect(findNextPendingToolCall([
-      assistant,
-      { role: "tool", meta: { toolCallId: "call-b" } },
-    ]))?.toMatchObject({ id: "call-a" });
+
+    try {
+      findNextPendingToolCall([
+        assistant,
+        { role: "tool", content: "{}", meta: { toolCallId: "call-b" } },
+      ]);
+      throw new Error("expected a mismatched tool-result protocol error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(TranscriptProtocolError);
+      expect((error as TranscriptProtocolError).code).toBe(
+        TranscriptProtocolErrorCode.MismatchedToolResult,
+      );
+    }
   });
 
   it("returns null after all calls close so duplicate or late results are rejected", () => {
     expect(findNextPendingToolCall([
-      { role: "assistant", meta: { toolCalls: calls } },
-      { role: "tool", meta: { toolCallId: "call-a" } },
-      { role: "tool", meta: { toolCallId: "call-b" } },
+      { role: "assistant", content: "", meta: { toolCalls: calls } },
+      {
+        role: "tool",
+        content: JSON.stringify({
+          status: "ok",
+          tool: ToolName.ListFiles,
+          revision: 0,
+          files: [],
+        }),
+        meta: { toolCallId: "call-a" },
+      },
+      {
+        role: "tool",
+        content: JSON.stringify({
+          status: "ok",
+          tool: ToolName.ReadFile,
+          revision: 0,
+          path: "src/App.tsx",
+          content: "export default null",
+          updatedAt: "2026-07-24T08:00:00.000Z",
+        }),
+        meta: { toolCallId: "call-b" },
+      },
     ])).toBeNull();
+  });
+
+  it("validates earlier rounds instead of hiding malformed history behind the latest assistant", () => {
+    expect(() => findNextPendingToolCall([
+      { role: "assistant", content: "", meta: { toolCalls: calls } },
+      { role: "assistant", content: "later reply", meta: { kind: "reply" } },
+    ])).toThrowError(
+      expect.objectContaining({
+        code: TranscriptProtocolErrorCode.MissingToolResult,
+      }),
+    );
   });
 });

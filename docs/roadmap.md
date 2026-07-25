@@ -197,7 +197,7 @@ Resume 只能解析并使用该 Run 已冻结的身份。身份版本不存在�
 
 - 分离领域消息、内部技术消息和 provider message，不再仅凭 `role` 猜业务语义。
 - 严格校验 assistant tool call 与 tool result 的身份和闭合关系。
-- 删除缺失 tool arguments 时注入 `"{}"` 的兜底；非法 JSON、未知结构和缺失字段直接失败。
+- tool arguments 必须以原始 string 明确存在；缺失或非 string 直接 fail closed。执行器按对应 ArgsSchema 解析，非法 JSON 或 schema 不匹配必须持久化显式 `BAD_ARGS`，不得补 `"{}"`；后续 Context 原样回放参数字节与错误结果。
 - 实现 `FullContextAssembler`：仍投影完整合法历史，不改变模型可见内容。
 - 新旧投影做 shadow diff，验证 tool pairing、顺序和内容等价。
 - 为后续技术状态消息预留独立 domain type；即使 provider API 最终要求某个 role，也不能把它当真实用户请求。

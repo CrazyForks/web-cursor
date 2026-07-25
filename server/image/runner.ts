@@ -4,12 +4,13 @@
  * [POS]: A 域生图 runner —— 前端只负责唤醒，服务端独立轮询指定 run 直到终态
  * [PROTOCOL]: runner 只处理 owner/runId 精确命中的 active run；provider 返回 URL/data URL 必须下载并写入 project_assets 后才暴露
  *   并发铁律：submit 和 poll 都必须先原子认领（条件 UPDATE ... RETURNING）再调 provider；
- *   run 的终态跃迁与 tool result 落库同事务提交，重叠 worker 只有一个写入赢家。
+ *   closeRun 在 conversation lock 内确认 exact pending 后，才原子提交 run 终态与 tool result。
  */
 import "server-only";
-import { and, asc, eq, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { imageJobs, imageRuns } from "@/server/db/schema";
+import { exactPendingGenerateImageCall } from "@/server/image/jobs";
 import { appendMessage } from "@/server/messages";
 import { pollImageProviderJob, providerError, submitImageProviderJob } from "@/server/image/provider";
 import { resolveProviderInputImages, saveGeneratedProjectAsset } from "@/server/image/storage";
@@ -17,11 +18,14 @@ import {
   ImageAssetSource,
   ImageJobErrorCode,
   ImageJobStatus,
+  ImageRunLifecycleErrorCode,
   ImageRunStatus,
   type GenerateImageRunResult,
   type ImageJobError,
+  type ImageRunLifecycleError,
 } from "@/types/image";
 import { ToolName } from "@/types/tool";
+import { GenerateImageTerminalResultSchema } from "@/types/toolResult";
 
 const MAX_JOBS_PER_TICK = 4;
 const POLL_INTERVAL_MS = 5_000;
@@ -297,8 +301,54 @@ async function pollJob(run: ImageRunRow, job: ImageJobRow, options: { publicBase
 async function closeRun(run: ImageRunRow, result: GenerateImageRunResult, errors: ImageJobError[]) {
   const status = errors.length ? ImageRunStatus.Failed : ImageRunStatus.Succeeded;
   const now = new Date();
+  const terminalResult = GenerateImageTerminalResultSchema.parse({
+    status: errors.length ? "error" : "ok",
+    tool: ToolName.GenerateImage,
+    runId: run.id,
+    result,
+  });
 
   await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${run.conversationId}))`,
+    );
+    const callIsPending = await exactPendingGenerateImageCall(
+      run.conversationId,
+      run.toolCallId,
+      tx,
+    );
+    if (!callIsPending) {
+      const lifecycleError: ImageRunLifecycleError = {
+        code: ImageRunLifecycleErrorCode.ToolCallClosed,
+        message: `Tool call ${run.toolCallId} is no longer pending.`,
+      };
+      const [stale] = await tx
+        .update(imageRuns)
+        .set({
+          status: ImageRunStatus.Failed,
+          result: { ...result, lifecycleError },
+          error: null,
+          updatedAt: now,
+          completedAt: now,
+        })
+        .where(and(
+          eq(imageRuns.id, run.id),
+          inArray(imageRuns.status, [
+            ImageRunStatus.Pending,
+            ImageRunStatus.Running,
+          ]),
+          isNull(imageRuns.deletedAt),
+        ))
+        .returning({ id: imageRuns.id });
+
+      if (stale) {
+        console.warn(
+          `${lifecycleError.code}: image run ${run.id} ${lifecycleError.message}`,
+        );
+      }
+      return;
+    }
+
     const [closed] = await tx
       .update(imageRuns)
       .set({
@@ -319,12 +369,7 @@ async function closeRun(run: ImageRunRow, result: GenerateImageRunResult, errors
 
     await appendMessage(run.conversationId, {
       role: "tool",
-      content: JSON.stringify({
-        status: errors.length ? "error" : "ok",
-        tool: ToolName.GenerateImage,
-        runId: run.id,
-        result,
-      }),
+      content: JSON.stringify(terminalResult),
       meta: { toolCallId: run.toolCallId },
     }, tx);
   });

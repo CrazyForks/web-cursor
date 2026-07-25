@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export const ImageRunStatus = {
   Pending: "pending",
   Running: "running",
@@ -6,6 +8,24 @@ export const ImageRunStatus = {
 } as const;
 
 export type ImageRunStatus = typeof ImageRunStatus[keyof typeof ImageRunStatus];
+
+export const ImageRunLifecycleErrorCode = {
+  ToolCallNotPending: "IMAGE_TOOL_CALL_NOT_PENDING",
+  ToolCallClosed: "IMAGE_TOOL_CALL_CLOSED",
+} as const;
+
+export type ImageRunLifecycleErrorCode =
+  typeof ImageRunLifecycleErrorCode[keyof typeof ImageRunLifecycleErrorCode];
+
+export type ImageRunLifecycleError = {
+  code: ImageRunLifecycleErrorCode;
+  message: string;
+};
+
+export const ImageRunLifecycleErrorSchema = z.object({
+  code: z.enum(ImageRunLifecycleErrorCode),
+  message: z.string(),
+}).strict();
 
 export const ImageJobStatus = {
   Pending: "pending",
@@ -24,6 +44,8 @@ export const ImageAssetSource = {
 
 export type ImageAssetSource = typeof ImageAssetSource[keyof typeof ImageAssetSource];
 
+export const ImageAssetSourceSchema = z.enum(ImageAssetSource);
+
 export const GeneratedImageMimeType = {
   Png: "image/png",
   Jpeg: "image/jpeg",
@@ -31,6 +53,8 @@ export const GeneratedImageMimeType = {
 } as const;
 
 export type GeneratedImageMimeType = typeof GeneratedImageMimeType[keyof typeof GeneratedImageMimeType];
+
+export const GeneratedImageMimeTypeSchema = z.enum(GeneratedImageMimeType);
 
 export const ImageAspectRatio = {
   Square: "1:1",
@@ -76,6 +100,8 @@ export const ImageJobErrorCode = {
 
 export type ImageJobErrorCode = typeof ImageJobErrorCode[keyof typeof ImageJobErrorCode];
 
+export const ImageJobErrorCodeSchema = z.enum(ImageJobErrorCode);
+
 export type GenerateImageItemInput = {
   label?: string;
   prompt: string;
@@ -110,6 +136,11 @@ export type ImageJobError = {
   message: string;
 };
 
+export const ImageJobErrorSchema = z.object({
+  code: ImageJobErrorCodeSchema,
+  message: z.string(),
+}).strict();
+
 export type GenerateImageJobResult = {
   assetId: string;
   url: string;
@@ -118,9 +149,18 @@ export type GenerateImageJobResult = {
   height: number;
 };
 
+export const GenerateImageJobResultSchema = z.object({
+  assetId: z.string().uuid(),
+  url: z.string().url(),
+  mimeType: GeneratedImageMimeTypeSchema,
+  width: z.number().int(),
+  height: z.number().int(),
+}).strict();
+
 export type GenerateImageRunResult = {
   assets: ProjectAssetRef[];
   errors?: ImageJobError[];
+  lifecycleError?: ImageRunLifecycleError;
 };
 
 export type ProjectAssetRef = {
@@ -133,3 +173,28 @@ export type ProjectAssetRef = {
   height: number;
   source: typeof ImageAssetSource.GeneratedImage;
 };
+
+export const ProjectAssetRefSchema = z.object({
+  assetId: z.string().uuid(),
+  imageJobId: z.string().uuid().optional(),
+  label: z.string().min(1).max(80).optional(),
+  url: z.string().url(),
+  mimeType: GeneratedImageMimeTypeSchema,
+  width: z.number().int(),
+  height: z.number().int(),
+  source: z.literal(ImageAssetSource.GeneratedImage),
+}).strict();
+
+export const GenerateImageSucceededRunResultSchema = z.object({
+  assets: z.array(ProjectAssetRefSchema).min(1),
+}).strict();
+
+export const GenerateImageFailedRunResultSchema = z.object({
+  assets: z.array(ProjectAssetRefSchema),
+  errors: z.array(ImageJobErrorSchema).min(1),
+}).strict();
+
+export const GenerateImageRunResultSchema = z.union([
+  GenerateImageSucceededRunResultSchema,
+  GenerateImageFailedRunResultSchema,
+]);

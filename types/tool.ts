@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export const ToolName = {
   ListFiles: "list_files",
   SearchText: "search_text",
@@ -73,8 +75,26 @@ export type ToolResult =
   | { status: "error"; type: typeof ToolResultType.BrowserRuntimeError; message: string; stack?: string; rawLog?: string }
   | { status: "error"; type: typeof ToolResultType.ToolInterrupted; message: string };
 
-export type ToolCallMeta = {
-  id: string;
-  name: ToolName | string;
-  arguments?: string;
-};
+export const ToolCallIdSchema = z.string()
+  .min(1)
+  .refine((value) => value.trim().length > 0, {
+    message: "tool call id must contain non-whitespace text",
+  });
+
+export const ToolCallNameSchema = z.string()
+  .min(1)
+  .refine((value) => value.trim().length > 0, {
+    message: "tool call name must contain non-whitespace text",
+  });
+
+export const ToolCallMetaSchema = z.object({
+  id: ToolCallIdSchema,
+  // Unknown model-emitted tool names must survive unchanged so the executor can
+  // return an explicit unsupported-tool result instead of guessing a known name.
+  name: ToolCallNameSchema,
+  // Keep the exact provider bytes. JSON/tool-schema validation belongs to the
+  // executor so a BAD_ARGS result and its malformed input remain replayable.
+  arguments: z.string(),
+}).strict();
+
+export type ToolCallMeta = z.infer<typeof ToolCallMetaSchema>;

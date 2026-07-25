@@ -7,22 +7,25 @@
  */
 import "server-only";
 import { and, asc, eq, isNull } from "drizzle-orm";
+import {
+  StoredMessageInputSchema,
+  type StoredMessageInput,
+} from "@/types/transcript";
 import { db } from "./db";
 import { messages } from "./db/schema";
 
-type NewMessage = {
-  role: "user" | "assistant" | "tool" | "system";
-  content: string;
-  model?: string;
-  meta?: unknown;
-};
+type NewMessage = StoredMessageInput;
 
 /** db 或 db.transaction 的 tx 都能写消息。 */
 type MessageWriter = Pick<typeof db, "insert">;
 
 /** 追加一条消息：不传 seq（DB identity 原子分配，多实例无竞态）。 */
 export async function appendMessage(conversationId: string, m: NewMessage, writer: MessageWriter = db) {
-  const [row] = await writer.insert(messages).values({ conversationId, ...m }).returning();
+  const message = StoredMessageInputSchema.parse(m);
+  const [row] = await writer
+    .insert(messages)
+    .values({ conversationId, ...message })
+    .returning();
   return row;
 }
 

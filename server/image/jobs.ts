@@ -2,21 +2,39 @@
  * [INPUT]: owner/project/conversation/toolCallId context + generate_image args
  * [OUTPUT]: persisted image run with one image job per requested image
  * [POS]: A 域异步生图任务创建层 —— 只创建 pending run/jobs，不调用 provider
- * [PROTOCOL]: run 绑定 toolCallId；单张图 prompt/status 只存 image_jobs，image_runs 只管聚合与闭合
+ * [PROTOCOL]: conversation lock 内确认 exact pending generate_image 后才能创建 run/jobs
  */
 import "server-only";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { findNextPendingToolCall } from "@/lib/pendingToolCall";
 import { db } from "@/server/db";
-import { imageJobs, imageRuns } from "@/server/db/schema";
+import { imageJobs, imageRuns, messages } from "@/server/db/schema";
 import {
   ImageJobStatus,
   ImageProvider,
   ImageProviderModel,
+  ImageRunLifecycleErrorCode,
   ImageRunStatus,
   type ImageProviderModel as ImageProviderModelValue,
   type GenerateImageInput,
   type PendingImageJob,
 } from "@/types/image";
 import { ToolName } from "@/types/tool";
+
+type ImageRunTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+export class ImageRunLifecycleError extends Error {
+  constructor(
+    readonly code: typeof ImageRunLifecycleErrorCode[
+      keyof typeof ImageRunLifecycleErrorCode
+    ],
+    readonly toolCallId: string,
+    message: string,
+  ) {
+    super(`${code}: ${message}`);
+    this.name = "ImageRunLifecycleError";
+  }
+}
 
 export type CreateImageRunInput = {
   ownerId: string;
@@ -39,10 +57,43 @@ export function configuredImageProviderModel(): ImageProviderModelValue {
   return model as ImageProviderModelValue;
 }
 
+export async function exactPendingGenerateImageCall(
+  conversationId: string,
+  toolCallId: string,
+  tx: ImageRunTransaction,
+): Promise<boolean> {
+  const rows = await tx
+    .select()
+    .from(messages)
+    .where(and(
+      eq(messages.conversationId, conversationId),
+      isNull(messages.deletedAt),
+    ))
+    .orderBy(asc(messages.seq));
+  const pending = findNextPendingToolCall(rows);
+  return pending?.id === toolCallId
+    && pending.name === ToolName.GenerateImage;
+}
+
 export async function createPendingImageRun(input: CreateImageRunInput): Promise<PendingImageRun> {
   const providerModel = configuredImageProviderModel();
 
   return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${input.conversationId}))`,
+    );
+    if (!await exactPendingGenerateImageCall(
+      input.conversationId,
+      input.toolCallId,
+      tx,
+    )) {
+      throw new ImageRunLifecycleError(
+        ImageRunLifecycleErrorCode.ToolCallNotPending,
+        input.toolCallId,
+        `Tool call ${input.toolCallId} is not the next pending generate_image call.`,
+      );
+    }
+
     const [run] = await tx.insert(imageRuns).values({
       ownerId: input.ownerId,
       projectId: input.projectId,

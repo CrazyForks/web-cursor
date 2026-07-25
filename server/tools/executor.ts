@@ -8,12 +8,11 @@ import "server-only";
 import { z } from "zod";
 import { inspectAttachment, AttachmentError, AttachmentErrorCode } from "@/server/attachments";
 import { inspectFigmaDesign } from "@/server/figma/inspect";
-import { FigmaErrorCode, FigmaInspectError, type FigmaDesignContext } from "@/server/figma/types";
+import { FigmaInspectError, type FigmaDesignContext } from "@/server/figma/types";
 import { createPendingImageRun, pendingImageRunResult } from "@/server/image/jobs";
 import {
   deleteProjectFile,
   FileOperationError,
-  FileOperationErrorCode,
   listProjectFilesSnapshot,
   readProjectFile,
   renameProjectFile,
@@ -40,38 +39,18 @@ import {
   WriteFileArgsSchema,
 } from "@/types/toolSchema";
 import { ToolName, type ToolCallMeta, type ToolName as ToolNameType } from "@/types/tool";
+import {
+  ToolExecutionErrorCode,
+  type ToolExecutionErrorCode as ToolExecutionErrorCodeValue,
+} from "@/types/toolResult";
+
+export { ToolExecutionErrorCode };
 
 export type ToolExecutionContext = {
   ownerId: string;
   projectId: string;
   conversationId: string;
 };
-
-export const ToolExecutionErrorCode = {
-  BadArgs: "BAD_ARGS",
-  BadPath: FileOperationErrorCode.BadPath,
-  BadRevision: FileOperationErrorCode.BadRevision,
-  BadSearchQuery: FileOperationErrorCode.BadSearchQuery,
-  NotFound: FileOperationErrorCode.NotFound,
-  Conflict: FileOperationErrorCode.Conflict,
-  RevisionConflict: FileOperationErrorCode.RevisionConflict,
-  StorageMismatch: FileOperationErrorCode.StorageMismatch,
-  Unsupported: AttachmentErrorCode.Unsupported,
-  InternalError: FileOperationErrorCode.InternalError,
-  FigmaNotConnected: FigmaErrorCode.NotConnected,
-  FigmaInvalidUrl: FigmaErrorCode.InvalidUrl,
-  FigmaNodeRequired: FigmaErrorCode.NodeRequired,
-  FigmaUnauthorized: FigmaErrorCode.Unauthorized,
-  FigmaForbidden: FigmaErrorCode.Forbidden,
-  FigmaNotFound: FigmaErrorCode.NotFound,
-  FigmaUnsupportedNode: FigmaErrorCode.UnsupportedNode,
-  FigmaProviderUnavailable: FigmaErrorCode.ProviderUnavailable,
-  FigmaRateLimited: FigmaErrorCode.RateLimited,
-  FigmaAssetExportFailed: FigmaErrorCode.AssetExportFailed,
-} as const;
-
-export type ToolExecutionErrorCode =
-  typeof ToolExecutionErrorCode[keyof typeof ToolExecutionErrorCode];
 
 export type ToolExecutionResult =
   | { status: "ok"; tool: typeof ToolName.ListFiles; revision: number; files: { path: string; updatedAt?: string }[] }
@@ -94,11 +73,10 @@ export type ToolExecutionResult =
       status: "error";
       tool: string;
       message: string;
-      code: ToolExecutionErrorCode;
+      code: ToolExecutionErrorCodeValue;
     };
 
-function parseArgs(raw: string | undefined): unknown {
-  if (!raw?.trim()) return {};
+function parseArgs(raw: string): unknown {
   return JSON.parse(raw);
 }
 

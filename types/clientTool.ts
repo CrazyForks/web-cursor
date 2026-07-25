@@ -8,7 +8,7 @@ import {
 import {
   ProjectFileContentSchema,
   ProjectFileSummarySchema,
-  ProjectRepositoryErrorCodeSchema,
+  ProjectRepositoryErrorCode,
   ProjectTextSearchMatchSchema,
 } from "./projectRepository";
 import { ProjectRevisionSchema } from "./projectRevision";
@@ -76,33 +76,121 @@ export const ClientToolErrorCode = {
   BadArgs: "BAD_ARGS",
 } as const;
 
-const ClientToolErrorCodeSchema = z.union([
-  z.literal(ClientToolErrorCode.BadArgs),
-  ProjectRepositoryErrorCodeSchema,
-]);
+export const ClientToolErrorCodeSchema = z.literal(
+  ClientToolErrorCode.BadArgs,
+);
 
 type ClientRepositoryToolName = ClientFileToolName | ClientGitToolName;
 
-function errorResultSchema<TTool extends ClientRepositoryToolName>(tool: TTool) {
+const BrowserRepositoryCommonErrorCode = {
+  BadArgs: ClientToolErrorCode.BadArgs,
+  LocalRepositoryMissing: ProjectRepositoryErrorCode.LocalRepositoryMissing,
+  StaleSnapshot: ProjectRepositoryErrorCode.StaleSnapshot,
+  ProtocolViolation: ProjectRepositoryErrorCode.ProtocolViolation,
+  WorkerDisposed: ProjectRepositoryErrorCode.WorkerDisposed,
+  InternalError: ProjectRepositoryErrorCode.InternalError,
+} as const;
+
+const BrowserFilePathErrorCode = {
+  BadPath: ProjectRepositoryErrorCode.BadPath,
+  ReservedPath: ProjectRepositoryErrorCode.ReservedPath,
+} as const;
+
+export const ClientListFilesErrorCode = {
+  ...BrowserRepositoryCommonErrorCode,
+} as const;
+
+export const ClientSearchTextErrorCode = {
+  ...BrowserRepositoryCommonErrorCode,
+} as const;
+
+export const ClientReadFileErrorCode = {
+  ...BrowserRepositoryCommonErrorCode,
+  ...BrowserFilePathErrorCode,
+  NotFound: ProjectRepositoryErrorCode.NotFound,
+} as const;
+
+export const ClientWriteFileErrorCode = {
+  ...BrowserRepositoryCommonErrorCode,
+  ...BrowserFilePathErrorCode,
+  Conflict: ProjectRepositoryErrorCode.Conflict,
+  RevisionConflict: ProjectRepositoryErrorCode.RevisionConflict,
+} as const;
+
+export const ClientDeleteFileErrorCode = {
+  ...BrowserRepositoryCommonErrorCode,
+  ...BrowserFilePathErrorCode,
+  NotFound: ProjectRepositoryErrorCode.NotFound,
+  RevisionConflict: ProjectRepositoryErrorCode.RevisionConflict,
+} as const;
+
+export const ClientRenameFileErrorCode = {
+  ...BrowserRepositoryCommonErrorCode,
+  ...BrowserFilePathErrorCode,
+  NotFound: ProjectRepositoryErrorCode.NotFound,
+  Conflict: ProjectRepositoryErrorCode.Conflict,
+  RevisionConflict: ProjectRepositoryErrorCode.RevisionConflict,
+} as const;
+
+const BrowserGitCommonErrorCode = {
+  ...BrowserRepositoryCommonErrorCode,
+  RepositoryNotInitialized:
+    ProjectRepositoryErrorCode.RepositoryNotInitialized,
+} as const;
+
+export const ClientGitStatusErrorCode = {
+  ...BrowserGitCommonErrorCode,
+} as const;
+
+export const ClientGitStageErrorCode = {
+  ...BrowserGitCommonErrorCode,
+  ...BrowserFilePathErrorCode,
+  NotFound: ProjectRepositoryErrorCode.NotFound,
+} as const;
+
+export const ClientGitUnstageErrorCode = {
+  ...ClientGitStageErrorCode,
+} as const;
+
+export const ClientGitCommitErrorCode = {
+  ...BrowserGitCommonErrorCode,
+  NothingToCommit: ProjectRepositoryErrorCode.NothingToCommit,
+} as const;
+
+export const ClientGitLogErrorCode = {
+  ...BrowserGitCommonErrorCode,
+} as const;
+
+export const ClientGitCurrentBranchErrorCode = {
+  ...BrowserGitCommonErrorCode,
+} as const;
+
+function errorResultSchema<TTool extends ClientRepositoryToolName>(
+  tool: TTool,
+  codeSchema: z.ZodType,
+) {
   return z.object({
     status: z.literal("error"),
     tool: z.literal(tool),
-    code: ClientToolErrorCodeSchema,
+    code: codeSchema,
     message: z.string().min(1),
   }).strict();
 }
 
-const ListFilesResultSchema = z.union([
+export const ListFilesResultSchema = z.union([
   z.object({
     status: z.literal("ok"),
     tool: z.literal(ToolName.ListFiles),
     revision: ProjectRevisionSchema,
     files: z.array(ProjectFileSummarySchema),
   }).strict(),
-  errorResultSchema(ToolName.ListFiles),
+  errorResultSchema(
+    ToolName.ListFiles,
+    z.enum(ClientListFilesErrorCode),
+  ),
 ]);
 
-const SearchTextResultSchema = z.union([
+export const SearchTextResultSchema = z.union([
   z.object({
     status: z.literal("ok"),
     tool: z.literal(ToolName.SearchText),
@@ -111,19 +199,25 @@ const SearchTextResultSchema = z.union([
     matches: z.array(ProjectTextSearchMatchSchema),
     truncated: z.boolean(),
   }).strict(),
-  errorResultSchema(ToolName.SearchText),
+  errorResultSchema(
+    ToolName.SearchText,
+    z.enum(ClientSearchTextErrorCode),
+  ),
 ]);
 
-const ReadFileResultSchema = z.union([
+export const ReadFileResultSchema = z.union([
   ProjectFileContentSchema.extend({
     status: z.literal("ok"),
     tool: z.literal(ToolName.ReadFile),
     revision: ProjectRevisionSchema,
   }).strict(),
-  errorResultSchema(ToolName.ReadFile),
+  errorResultSchema(
+    ToolName.ReadFile,
+    z.enum(ClientReadFileErrorCode),
+  ),
 ]);
 
-const WriteFileResultSchema = z.union([
+export const WriteFileResultSchema = z.union([
   z.object({
     status: z.literal("ok"),
     tool: z.literal(ToolName.WriteFile),
@@ -131,20 +225,26 @@ const WriteFileResultSchema = z.union([
     path: z.string().min(1),
     updatedAt: z.string().datetime(),
   }).strict(),
-  errorResultSchema(ToolName.WriteFile),
+  errorResultSchema(
+    ToolName.WriteFile,
+    z.enum(ClientWriteFileErrorCode),
+  ),
 ]);
 
-const DeleteFileResultSchema = z.union([
+export const DeleteFileResultSchema = z.union([
   z.object({
     status: z.literal("ok"),
     tool: z.literal(ToolName.DeleteFile),
     revision: ProjectRevisionSchema,
     path: z.string().min(1),
   }).strict(),
-  errorResultSchema(ToolName.DeleteFile),
+  errorResultSchema(
+    ToolName.DeleteFile,
+    z.enum(ClientDeleteFileErrorCode),
+  ),
 ]);
 
-const RenameFileResultSchema = z.union([
+export const RenameFileResultSchema = z.union([
   z.object({
     status: z.literal("ok"),
     tool: z.literal(ToolName.RenameFile),
@@ -153,7 +253,10 @@ const RenameFileResultSchema = z.union([
     newPath: z.string().min(1),
     updatedAt: z.string().datetime(),
   }).strict(),
-  errorResultSchema(ToolName.RenameFile),
+  errorResultSchema(
+    ToolName.RenameFile,
+    z.enum(ClientRenameFileErrorCode),
+  ),
 ]);
 
 export const ClientFileToolResultSchema = z.union([
@@ -167,52 +270,70 @@ export const ClientFileToolResultSchema = z.union([
 
 export type ClientFileToolResult = z.infer<typeof ClientFileToolResultSchema>;
 
-const GitStatusToolResultSchema = z.union([
+export const GitStatusToolResultSchema = z.union([
   GitStatusResultSchema.extend({
     status: z.literal("ok"),
     tool: z.literal(ToolName.GitStatus),
   }).strict(),
-  errorResultSchema(ToolName.GitStatus),
+  errorResultSchema(
+    ToolName.GitStatus,
+    z.enum(ClientGitStatusErrorCode),
+  ),
 ]);
 
-const GitStageResultSchema = z.union([
+export const GitStageResultSchema = z.union([
   GitStatusResultSchema.extend({
     status: z.literal("ok"),
     tool: z.literal(ToolName.GitStage),
   }).strict(),
-  errorResultSchema(ToolName.GitStage),
+  errorResultSchema(
+    ToolName.GitStage,
+    z.enum(ClientGitStageErrorCode),
+  ),
 ]);
 
-const GitUnstageResultSchema = z.union([
+export const GitUnstageResultSchema = z.union([
   GitStatusResultSchema.extend({
     status: z.literal("ok"),
     tool: z.literal(ToolName.GitUnstage),
   }).strict(),
-  errorResultSchema(ToolName.GitUnstage),
+  errorResultSchema(
+    ToolName.GitUnstage,
+    z.enum(ClientGitUnstageErrorCode),
+  ),
 ]);
 
-const GitCommitToolResultSchema = z.union([
+export const GitCommitToolResultSchema = z.union([
   GitCommitResultSchema.extend({
     status: z.literal("ok"),
     tool: z.literal(ToolName.GitCommit),
   }).strict(),
-  errorResultSchema(ToolName.GitCommit),
+  errorResultSchema(
+    ToolName.GitCommit,
+    z.enum(ClientGitCommitErrorCode),
+  ),
 ]);
 
-const GitLogToolResultSchema = z.union([
+export const GitLogToolResultSchema = z.union([
   GitLogResultSchema.extend({
     status: z.literal("ok"),
     tool: z.literal(ToolName.GitLog),
   }).strict(),
-  errorResultSchema(ToolName.GitLog),
+  errorResultSchema(
+    ToolName.GitLog,
+    z.enum(ClientGitLogErrorCode),
+  ),
 ]);
 
-const GitCurrentBranchToolResultSchema = z.union([
+export const GitCurrentBranchToolResultSchema = z.union([
   GitCurrentBranchResultSchema.extend({
     status: z.literal("ok"),
     tool: z.literal(ToolName.GitCurrentBranch),
   }).strict(),
-  errorResultSchema(ToolName.GitCurrentBranch),
+  errorResultSchema(
+    ToolName.GitCurrentBranch,
+    z.enum(ClientGitCurrentBranchErrorCode),
+  ),
 ]);
 
 export const ClientGitToolResultSchema = z.union([

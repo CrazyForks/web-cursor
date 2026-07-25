@@ -23,7 +23,7 @@ import {
 } from "../../types/toolSchema";
 
 function parseArgs(raw: string): unknown {
-  return raw.trim() ? JSON.parse(raw) : {};
+  return JSON.parse(raw);
 }
 
 function errorResult(

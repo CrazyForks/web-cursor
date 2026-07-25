@@ -8,6 +8,7 @@
 import "server-only"; // A 域守卫：持 key，误 import 进客户端组件会在编译期报错
 import OpenAI from "openai";
 import type { AppLocale } from "@/i18n/locales";
+import { DEEPSEEK_BASE_URL } from "@/server/models";
 import { ProjectStorageKind, type ProjectStorageKind as ProjectStorageKindValue } from "@/types/projectStorage";
 
 const BASE_SYSTEM_PROMPT = `
@@ -115,7 +116,9 @@ const LOCALE_SYSTEM_INSTRUCTIONS: Record<AppLocale, string> = {
   en: "Language rule: Always respond to the user in English. Do not translate code, filenames, tool names, error codes, or protocol fields.",
 };
 
-function repositoryCapabilityPrompt(storageKind: ProjectStorageKindValue): string {
+export function repositoryCapabilityPromptForStorageKind(
+  storageKind: ProjectStorageKindValue,
+): string {
   switch (storageKind) {
     case ProjectStorageKind.Database:
       return `
@@ -156,11 +159,11 @@ terminal_filesystem: disposable_runtime_mirror
 }
 
 export function systemPromptForLocale(locale: AppLocale, storageKind: ProjectStorageKindValue): string {
-  return `${BASE_SYSTEM_PROMPT}\n${LOCALE_SYSTEM_INSTRUCTIONS[locale]}\n${repositoryCapabilityPrompt(storageKind)}`;
+  return `${BASE_SYSTEM_PROMPT}\n${LOCALE_SYSTEM_INSTRUCTIONS[locale]}\n${repositoryCapabilityPromptForStorageKind(storageKind)}`;
 }
 
 const llmClient = new OpenAI({
-  baseURL: "https://api.deepseek.com",
+  baseURL: DEEPSEEK_BASE_URL,
   apiKey: process.env.DEEPSEEK_API_KEY ?? "",
 });
 

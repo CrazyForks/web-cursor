@@ -12,6 +12,7 @@ import { ownerIdFrom } from "@/server/owner";
 import { ClientToolResultSubmissionSchema, clientToolRunsInBrowser } from "@/types/clientTool";
 import { ProjectStorageKindSchema } from "@/types/projectStorage";
 import { findNextPendingToolCall } from "@/lib/pendingToolCall";
+import { TranscriptProtocolError } from "@/lib/agent/fullContextAssembler";
 
 class ToolResultConflict extends Error {}
 
@@ -81,6 +82,13 @@ export async function POST(req: Request, ctx: Ctx) {
   } catch (e) {
     if (e instanceof ToolResultConflict) {
       return Response.json({ error: "tool result conflict", detail: e.message }, { status: 409 });
+    }
+    if (e instanceof TranscriptProtocolError) {
+      return Response.json({
+        error: "transcript protocol error",
+        code: e.code,
+        detail: e.message,
+      }, { status: 409 });
     }
     console.error("Failed to append client tool result", e);
     return Response.json({ error: "internal error" }, { status: 500 });

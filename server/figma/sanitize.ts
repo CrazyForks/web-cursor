@@ -120,12 +120,20 @@ function layoutFrom(node: RawFigmaNode): SimplifiedFigmaNode["layout"] {
   return Object.values(layout).some((value) => value !== undefined) ? layout : undefined;
 }
 
-function styleRecord(value: unknown): Record<string, unknown> | undefined {
+function styleRecord(
+  value: unknown,
+): Record<string, string | number | boolean> | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
-  return Object.fromEntries(Object.entries(record).filter(([, entry]) => {
-    return ["string", "number", "boolean"].includes(typeof entry);
-  }));
+  const entries = Object.entries(record).filter(
+    (entry): entry is [string, string | number | boolean] => {
+      const entryType = typeof entry[1];
+      return entryType === "string"
+        || entryType === "number"
+        || entryType === "boolean";
+    },
+  );
+  return Object.fromEntries(entries);
 }
 
 function simplifyNode(node: RawFigmaNode, depth: number, state: SanitizeState): SimplifiedFigmaNode | null {

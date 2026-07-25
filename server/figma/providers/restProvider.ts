@@ -7,6 +7,8 @@
 import "server-only";
 import { z } from "zod";
 import {
+  FigmaAssetMimeType,
+  FigmaAssetSource,
   FigmaErrorCode,
   FigmaInspectError,
   type FigmaAssetRef,
@@ -99,11 +101,11 @@ async function fetchTargetAsset(
     : {};
 
   return {
-    source: "figma_export",
+    source: FigmaAssetSource.Export,
     sourceFileKey: target.fileKey,
     sourceNodeId: target.nodeId,
     url: exportUrl,
-    mimeType: "image/png",
+    mimeType: FigmaAssetMimeType.Png,
     width: typeof box.width === "number" ? box.width : undefined,
     height: typeof box.height === "number" ? box.height : undefined,
     ttlWarning: ASSET_TTL_WARNING,

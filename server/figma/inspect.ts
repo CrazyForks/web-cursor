@@ -10,6 +10,7 @@ import { inspectWithProvider } from "./provider";
 import { sanitizeFigmaNode } from "./sanitize";
 import { parseFigmaTarget } from "./url";
 import type { FigmaDesignContext, InspectFigmaOptions } from "./types";
+import { ToolName } from "@/types/tool";
 
 export async function inspectFigmaDesign({
   ownerId,
@@ -30,7 +31,7 @@ export async function inspectFigmaDesign({
 
   return {
     status: "ok",
-    tool: "inspect_figma_design",
+    tool: ToolName.InspectFigmaDesign,
     source: {
       fileKey: target.fileKey,
       nodeId: target.nodeId,
