@@ -1,6 +1,6 @@
 /**
  * [INPUT]: conversation id + x-owner-id
- * [OUTPUT]: image runs and jobs for UI recovery
+ * [OUTPUT]: image runs with nullable parent AgentRun attribution and jobs for UI recovery
  * [POS]: A 域会话生图任务查询接口 —— messages 保持 transcript，UI 单独恢复异步任务状态
  * [PROTOCOL]: 只读本地 image_runs/image_jobs；不代理 provider，不写 messages
  */
@@ -23,6 +23,7 @@ export async function GET(req: Request, ctx: Ctx) {
   const runs = await db
     .select({
       runId: imageRuns.id,
+      agentRunId: imageRuns.agentRunId,
       toolCallId: imageRuns.toolCallId,
       status: imageRuns.status,
       result: imageRuns.result,

@@ -1,78 +1,122 @@
 /**
- * [INPUT]: kind=user 的用户消息，或 kind=resume 的已闭合 transcript 续写请求
- * [OUTPUT]: SSE(init/tools_call/tool_result/tool_pending/files_changed/chat/done/error)，并落库完整 transcript
- * [POS]: A 域 LLM Agent loop —— 持 key、读 DB transcript、执行后端文件工具、流式转发
- * [PROTOCOL]: 每次 HTTP loop 只解析一次 versioned Harness；provider tool stream 与 Transcript 都 fail closed。
- *   Database 工具由 server 执行且结果经 conversation fence 闭合；Browser Git 整轮交给 client。
+ * [INPUT]: strict user/resume/preview_feedback ChatTurn
+ * [OUTPUT]: AgentRun-bound SSE plus durable transcript/tool invocation ledger
+ * [POS]: A 域 AgentRun 执行器 —— HTTP 只持有可续租 lease，运行事实由 server/agentRuns.ts 持久化
+ * [PROTOCOL]: 每轮先持久化 run/model/tool identity；所有副作用执行前过 run fence，Stop 先落库再使迟到结果失效
  */
-import { toLLMMessages, TranscriptProtocolError } from "@/server/context";
-import { ToolCallStreamAssembler } from "@/lib/agent/toolCallStreamAssembler";
+import { and, eq, isNull } from "drizzle-orm";
 import type { ChatCompletionCreateParamsStreaming } from "openai/resources/chat/completions";
-import { defaultLocale, isAppLocale, localeHeaderName, type AppLocale } from "@/i18n/locales";
+import {
+  defaultLocale,
+  isAppLocale,
+  localeHeaderName,
+  type AppLocale,
+} from "@/i18n/locales";
+import {
+  ToolCallStreamAssembler,
+  ToolCallStreamProtocolError,
+} from "@/lib/agent/toolCallStreamAssembler";
+import { TranscriptProtocolError } from "@/lib/agent/fullContextAssembler";
 import { db } from "@/server/db";
 import { conversations, projects } from "@/server/db/schema";
-import llmClient from "@/server/llm";
-import { agentHarnessFor } from "@/server/agentHarness";
-import { getOwnedConversationProjectId, ownsConversation, ownsProject } from "@/server/guard";
-import { ownerIdFrom } from "@/server/owner";
-import { appendMessage, listMessages } from "@/server/messages";
 import { attachToConversation, AttachmentError } from "@/server/attachments";
 import {
-  appendPendingToolResults,
-  PendingToolResultAppendStatus,
-  prepareTranscriptForModelInput,
-  TailToolCallError,
-  TailToolCallReadiness,
-  type PendingToolResultAppendOutcome,
-} from "@/server/toolCalls";
-import { makeInitialTitle, updateGeneratedTitlesFromUserMessage } from "@/server/titles";
+  acquireAgentRun,
+  AgentRunCreationOutcome,
+  AgentRunLeaseConfig,
+  AgentRunServiceError,
+  AgentRunServiceErrorCode,
+  beginAgentModelRound,
+  createAgentRun,
+  failAgentRun,
+  heartbeatAgentRun,
+  markAsyncToolInvocationStarted,
+  markServerToolInvocationStarted,
+  recordAgentAssistantReply,
+  recordAgentExternalWait,
+  recordAgentToolRound,
+  recordRejectedToolResult,
+  recordServerToolResult,
+  releaseAgentRunLease,
+  runInAgentRunTransaction,
+  waitForAgentBoundary,
+  type AgentRunInvocation,
+  type AgentRunLease,
+  type AgentRunCreation,
+} from "@/server/agentRuns";
+import {
+  agentHarnessFor,
+  AgentHarnessRestoreError,
+  restoreAgentHarness,
+} from "@/server/agentHarness";
+import { toLLMMessages } from "@/server/context";
+import { maybeAppendFigmaConnectionGate } from "@/server/integrations/figmaGate";
+import llmClient from "@/server/llm";
+import { listMessages } from "@/server/messages";
+import { ownerIdFrom } from "@/server/owner";
+import { previewFeedbackMessage } from "@/server/previewFeedback";
+import {
+  AgentToolPolicyError,
+  agentToolEffect,
+  agentToolExecutionDomain,
+  serverDatabaseToolIsAtomicMutation,
+} from "@/server/tools/agentToolPolicy";
 import {
   executeToolCall,
   ToolExecutionErrorCode,
   type ToolExecutionContext,
   type ToolExecutionResult,
 } from "@/server/tools/executor";
-import { maybeAppendFigmaConnectionGate } from "@/server/integrations/figmaGate";
-import { ChatEventType, ChatTurnSchema, type ChatEvent, type ChatTurn } from "@/types/chat";
-import { FileChangeOperation } from "@/types/chat";
+import { updateGeneratedTitlesFromUserMessage, makeInitialTitle } from "@/server/titles";
+import {
+  extractWriteFileStreamUpdate,
+  type WriteFileStreamState,
+} from "@/server/writeFileStream";
+import {
+  AgentRunFailureCode,
+  AgentRunStatus,
+  AgentToolExecutionDomain,
+  AgentToolResultKind,
+  type AgentRunSnapshot,
+} from "@/types/agentRun";
 import type { AttachmentSummary } from "@/types/attachment";
-import type { IntegrationCardMeta } from "@/types/integration";
-import { ToolName, ToolResultType, type ToolCallMeta } from "@/types/tool";
-import { extractWriteFileStreamUpdate, type WriteFileStreamState } from "@/server/writeFileStream";
+import {
+  ChatEventSchema,
+  ChatEventType,
+  ChatTurnSchema,
+  FileChangeOperation,
+  type ChatEvent,
+  type ChatTurn,
+} from "@/types/chat";
+import { ClientToolCallSchema } from "@/types/clientTool";
 import {
   ProjectStorageKind,
   ProjectStorageKindSchema,
   type ProjectStorageKind as ProjectStorageKindValue,
 } from "@/types/projectStorage";
-import type { ProjectRepositoryDescriptor } from "@/types/projectRepository";
-import { toProjectRepositoryDescriptor } from "@/server/projectResponse";
-import { and, eq, isNull } from "drizzle-orm";
-import { ClientToolCallSchema, clientToolRunsInBrowser } from "@/types/clientTool";
+import { ToolName, type ToolCallMeta } from "@/types/tool";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type DbMessage = Awaited<ReturnType<typeof listMessages>>[number];
-type ResolvedAgentHarness = ReturnType<typeof agentHarnessFor>;
-
-const MAX_TOOL_ROUNDS = 16;
-
-const ChatRequestErrorCode = {
-  AsyncToolPending: "ASYNC_TOOL_PENDING",
-} as const;
-
-const ChatAgentDiagnosticCode = {
-  StaleServerToolResultDropped: "STALE_SERVER_TOOL_RESULT_DROPPED",
-} as const;
-
-const TOOL_ROUND_LIMIT_MESSAGE: Record<AppLocale, (max: number) => string> = {
-  zh: (max) => `工具调用超过上限 ${max} 轮，已停止。`,
-  en: (max) => `Stopped: tool calls exceeded the limit of ${max} rounds.`,
-};
+type ResolvedAgentHarness = ReturnType<typeof restoreAgentHarness>;
+type ChatEventPayload = ChatEvent extends infer TEvent
+  ? TEvent extends ChatEvent
+    ? Omit<TEvent, "agentRunId" | "attempt">
+    : never
+  : never;
 
 type DeepSeekStreamingParams = ChatCompletionCreateParamsStreaming & {
   thinking: { type: "disabled" };
 };
+
+const InvalidToolRoundMessage = {
+  MixedDomains:
+    "A tool-call round cannot mix client, server, and async execution domains.",
+  MultipleAsync:
+    "A tool-call round may contain only one async generate_image invocation.",
+} as const;
 
 function sseResponse(stream: ReadableStream<Uint8Array>) {
   return new Response(stream, {
@@ -87,25 +131,27 @@ function requestLocale(req: Request): AppLocale | Response {
   const locale = req.headers.get(localeHeaderName);
   if (locale === null) return defaultLocale;
   if (isAppLocale(locale)) return locale;
-  return Response.json({ error: "bad request", detail: `Invalid ${localeHeaderName}` }, { status: 400 });
+  return Response.json(
+    { error: "bad request", detail: `Invalid ${localeHeaderName}` },
+    { status: 400 },
+  );
 }
 
-function serverToolResultsWereAppended(
-  conversationId: string,
-  outcome: PendingToolResultAppendOutcome,
-): boolean {
-  if (outcome.status === PendingToolResultAppendStatus.Appended) return true;
-
-  console.warn(ChatAgentDiagnosticCode.StaleServerToolResultDropped, {
-    conversationId,
-    rejectedIndex: outcome.rejectedIndex,
-    expected: outcome.expected,
-    received: outcome.received,
+function withRun(
+  run: AgentRunSnapshot,
+  event: ChatEventPayload,
+): ChatEvent {
+  return ChatEventSchema.parse({
+    ...event,
+    agentRunId: run.id,
+    attempt: run.attempt,
   });
-  return false;
 }
 
-function assistantMessages(rows: DbMessage[], harness: ResolvedAgentHarness) {
+function assistantMessages(
+  rows: DbMessage[],
+  harness: ResolvedAgentHarness,
+) {
   return [
     { role: "system" as const, content: harness.systemPrompt },
     ...toLLMMessages(rows),
@@ -131,16 +177,17 @@ async function requestAssistant(
 async function collectAssistantTurn(
   rows: DbMessage[],
   harness: ResolvedAgentHarness,
-  send: (event: ChatEvent) => void,
+  send: (event: ChatEventPayload) => void,
   signal: AbortSignal,
 ): Promise<{ text: string; toolCalls: ToolCallMeta[] }> {
   const stream = await requestAssistant(rows, harness, signal);
   const toolCalls = new ToolCallStreamAssembler();
-  const announcedToolCalls = new Set<number>();
-  const writeFileStreams = new Map<number, WriteFileStreamState>();
+  const announced = new Set<number>();
+  const fileStreams = new Map<number, WriteFileStreamState>();
   let text = "";
 
   for await (const chunk of stream) {
+    signal.throwIfAborted();
     const choice = chunk.choices[0];
     toolCalls.observeFinishReason(choice?.finish_reason);
     const delta = choice?.delta;
@@ -149,22 +196,21 @@ async function collectAssistantTurn(
       send({ type: ChatEventType.Chat, delta: delta.content });
     }
 
-    for (const tc of delta?.tool_calls ?? []) {
-      const next = toolCalls.append(tc);
-
+    for (const toolDelta of delta?.tool_calls ?? []) {
+      const next = toolCalls.append(toolDelta);
       if (
         next.id
         && next.name === ToolName.WriteFile
         && next.arguments !== undefined
-        && typeof tc.function?.arguments === "string"
-        && tc.function.arguments.length > 0
+        && typeof toolDelta.function?.arguments === "string"
+        && toolDelta.function.arguments.length > 0
       ) {
         const update = extractWriteFileStreamUpdate(
           next.arguments,
-          writeFileStreams.get(next.index),
+          fileStreams.get(next.index),
         );
         if (update) {
-          writeFileStreams.set(next.index, update.state);
+          fileStreams.set(next.index, update.state);
           if (update.path || update.delta) {
             send({
               type: ChatEventType.FileWriteStream,
@@ -176,8 +222,8 @@ async function collectAssistantTurn(
         }
       }
 
-      if (next.id && next.name && !announcedToolCalls.has(next.index)) {
-        announcedToolCalls.add(next.index);
+      if (next.id && next.name && !announced.has(next.index)) {
+        announced.add(next.index);
         send({
           type: ChatEventType.ToolsCall,
           index: next.index,
@@ -188,22 +234,66 @@ async function collectAssistantTurn(
     }
   }
 
-  return {
-    text,
-    toolCalls: toolCalls.finish(),
-  };
+  return { text, toolCalls: toolCalls.finish() };
+}
+
+async function withLeaseHeartbeat<T>(
+  execution: AgentRunLease,
+  ownerId: string,
+  signal: AbortSignal,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal.reason);
+  if (signal.aborted) abort();
+  else signal.addEventListener("abort", abort, { once: true });
+
+  let heartbeatError: unknown;
+  let heartbeatInFlight: Promise<unknown> | null = null;
+  const timer = setInterval(() => {
+    if (heartbeatInFlight || controller.signal.aborted) return;
+    heartbeatInFlight = heartbeatAgentRun({
+      ownerId,
+      runId: execution.run.id,
+      attempt: execution.run.attempt,
+      leaseId: execution.leaseId,
+    }).catch((error) => {
+      heartbeatError = error;
+      controller.abort(error);
+    }).finally(() => {
+      heartbeatInFlight = null;
+    });
+  }, AgentRunLeaseConfig.HeartbeatIntervalMs);
+
+  try {
+    return await operation(controller.signal);
+  } catch (error) {
+    if (heartbeatError) throw heartbeatError;
+    throw error;
+  } finally {
+    clearInterval(timer);
+    signal.removeEventListener("abort", abort);
+    await heartbeatInFlight;
+  }
 }
 
 function fileChangedEvent(
-  result: Awaited<ReturnType<typeof executeToolCall>>,
-): Extract<ChatEvent, { type: typeof ChatEventType.FilesChanged }> | null {
+  result: ToolExecutionResult,
+): Extract<ChatEventPayload, { type: typeof ChatEventType.FilesChanged }> | null {
   if (result.status !== "ok") return null;
-
   if (result.tool === ToolName.WriteFile) {
-    return { type: ChatEventType.FilesChanged, operation: FileChangeOperation.Write, path: result.path };
+    return {
+      type: ChatEventType.FilesChanged,
+      operation: FileChangeOperation.Write,
+      path: result.path,
+    };
   }
   if (result.tool === ToolName.DeleteFile) {
-    return { type: ChatEventType.FilesChanged, operation: FileChangeOperation.Delete, path: result.path };
+    return {
+      type: ChatEventType.FilesChanged,
+      operation: FileChangeOperation.Delete,
+      path: result.path,
+    };
   }
   if (result.tool === ToolName.RenameFile) {
     return {
@@ -216,454 +306,776 @@ function fileChangedEvent(
   return null;
 }
 
-async function runAgentLoop({
-  ownerId,
-  conversationId,
-  projectId,
-  storageKind,
-  created,
-  initRepository,
-  userMessage,
-  locale,
-  send,
-  signal,
-}: {
+function toolResultKind(
+  result: Exclude<ToolExecutionResult, { status: "pending" }>,
+) {
+  return result.status === "ok"
+    ? AgentToolResultKind.Success
+    : AgentToolResultKind.Error;
+}
+
+function rejectedToolResult(tool: string, message: string): ToolExecutionResult {
+  return {
+    status: "error",
+    tool,
+    code: ToolExecutionErrorCode.BadArgs,
+    message,
+  };
+}
+
+function invalidRoundMessage(invocations: readonly AgentRunInvocation[]) {
+  const domains = new Set(invocations.map(({ executionDomain }) => executionDomain));
+  if (domains.size > 1) return InvalidToolRoundMessage.MixedDomains;
+  if (
+    domains.has(AgentToolExecutionDomain.Async)
+    && invocations.length > 1
+  ) {
+    return InvalidToolRoundMessage.MultipleAsync;
+  }
+  return null;
+}
+
+async function rejectInvalidRound(input: {
+  execution: AgentRunLease;
   ownerId: string;
-  conversationId: string;
+  invocations: readonly AgentRunInvocation[];
+  message: string;
+  send: (event: ChatEventPayload) => void;
+}) {
+  for (const invocation of input.invocations) {
+    const result = rejectedToolResult(invocation.toolName, input.message);
+    await recordRejectedToolResult({
+      ownerId: input.ownerId,
+      runId: input.execution.run.id,
+      invocationId: invocation.id,
+      attempt: input.execution.run.attempt,
+      leaseId: input.execution.leaseId,
+      content: JSON.stringify(result),
+    });
+    input.send({
+      type: ChatEventType.ToolResult,
+      name: invocation.toolName,
+      status: "error",
+    });
+  }
+}
+
+async function executeServerInvocation(input: {
+  execution: AgentRunLease;
+  ownerId: string;
   projectId: string;
+  conversationId: string;
   storageKind: ProjectStorageKindValue;
+  invocation: AgentRunInvocation;
+  signal: AbortSignal;
+}): Promise<ToolExecutionResult> {
+  const runIdentity = {
+    ownerId: input.ownerId,
+    runId: input.execution.run.id,
+    invocationId: input.invocation.id,
+    attempt: input.execution.run.attempt,
+    leaseId: input.execution.leaseId,
+  };
+  const call: ToolCallMeta = {
+    id: input.invocation.providerCallId,
+    name: input.invocation.toolName,
+    arguments: input.invocation.arguments,
+  };
+  const context: ToolExecutionContext = {
+    ownerId: input.ownerId,
+    projectId: input.projectId,
+    conversationId: input.conversationId,
+  };
+
+  if (
+    serverDatabaseToolIsAtomicMutation(
+      input.invocation.toolName,
+      input.storageKind,
+    )
+  ) {
+    return runInAgentRunTransaction(async (tx) => {
+      await markServerToolInvocationStarted({ ...runIdentity, writer: tx });
+      const result = await executeToolCall(call, {
+        ...context,
+        databaseWriter: tx,
+      });
+      if (result.status === "pending") {
+        throw new Error("Database mutation returned an async result.");
+      }
+      await recordServerToolResult({
+        ...runIdentity,
+        writer: tx,
+        kind: toolResultKind(result),
+        content: JSON.stringify(result),
+      });
+      return result;
+    });
+  }
+
+  await markServerToolInvocationStarted(runIdentity);
+  const result = await withLeaseHeartbeat(
+    input.execution,
+    input.ownerId,
+    input.signal,
+    (toolSignal) => {
+      toolSignal.throwIfAborted();
+      return executeToolCall(call, context);
+    },
+  );
+  if (result.status === "pending") {
+    throw new Error("Server invocation unexpectedly returned an async result.");
+  }
+  await recordServerToolResult({
+    ...runIdentity,
+    kind: toolResultKind(result),
+    content: JSON.stringify(result),
+  });
+  return result;
+}
+
+async function executeAsyncInvocation(input: {
+  execution: AgentRunLease;
+  ownerId: string;
+  projectId: string;
+  conversationId: string;
+  invocation: AgentRunInvocation;
+}): Promise<{
+  result: ToolExecutionResult;
+  waitingRun: AgentRunSnapshot | null;
+}> {
+  return runInAgentRunTransaction(async (tx) => {
+    const identity = {
+      ownerId: input.ownerId,
+      runId: input.execution.run.id,
+      invocationId: input.invocation.id,
+      attempt: input.execution.run.attempt,
+      leaseId: input.execution.leaseId,
+      writer: tx,
+    };
+    await markAsyncToolInvocationStarted(identity);
+    const result = await executeToolCall({
+      id: input.invocation.providerCallId,
+      name: input.invocation.toolName,
+      arguments: input.invocation.arguments,
+    }, {
+      ownerId: input.ownerId,
+      projectId: input.projectId,
+      conversationId: input.conversationId,
+      databaseWriter: tx,
+      agentRun: {
+        id: input.execution.run.id,
+        invocationId: input.invocation.id,
+      },
+    });
+    if (result.status !== "pending") {
+      await recordRejectedToolResult({
+        ...identity,
+        content: JSON.stringify(result),
+      });
+      return { result, waitingRun: null };
+    }
+    const waitingRun = await waitForAgentBoundary({
+      ownerId: input.ownerId,
+      runId: input.execution.run.id,
+      attempt: input.execution.run.attempt,
+      leaseId: input.execution.leaseId,
+      status: AgentRunStatus.WaitingAsyncTool,
+      invocationIds: [input.invocation.id],
+      writer: tx,
+    });
+    return { result, waitingRun };
+  });
+}
+
+async function runAgentLoop(input: {
+  execution: AgentRunLease;
+  harness: ResolvedAgentHarness;
+  ownerId: string;
   created: boolean;
-  initRepository?: ProjectRepositoryDescriptor;
   userMessage?: string;
   locale: AppLocale;
-  send: (event: ChatEvent) => void;
+  send: (event: ChatEventPayload) => void;
   signal: AbortSignal;
-}) {
-  const harness = agentHarnessFor(locale, storageKind);
-
-  if (created) {
-    if (!initRepository) throw new Error("Missing repository descriptor for new conversation.");
-    send({ type: ChatEventType.Init, conversationId, repository: initRepository });
+}): Promise<void> {
+  const { run } = input.execution;
+  const storageKind = ProjectStorageKindSchema.parse(run.repository.storageKind);
+  if (input.created) {
+    input.send({
+      type: ChatEventType.Init,
+      conversationId: run.conversationId,
+      repository: run.repository,
+    });
   }
-  if (userMessage) {
-    try {
-      const titleUpdate = await updateGeneratedTitlesFromUserMessage({
-        conversationId,
-        projectId,
-        userMessage,
-        signal,
-      });
-      if (titleUpdate) send({ type: ChatEventType.Title, conversationId, ...titleUpdate });
-    } catch (titleError) {
-      if (signal.aborted) throw titleError;
-      console.warn("Failed to generate chat title", titleError);
-    }
-  }
+  input.send({ type: ChatEventType.RunState, run });
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    signal.throwIfAborted();
-    const rows = await listMessages(conversationId);
-    const assistant = await collectAssistantTurn(rows, harness, send, signal);
-    signal.throwIfAborted();
-
-    if (assistant.toolCalls.length === 0) {
-      if (assistant.text) {
-        await appendMessage(conversationId, {
+  if (input.userMessage) {
+    const figmaGate = await withLeaseHeartbeat(
+      input.execution,
+      input.ownerId,
+      input.signal,
+      () => maybeAppendFigmaConnectionGate({
+        ownerId: input.ownerId,
+        conversationId: run.conversationId,
+        message: input.userMessage!,
+        locale: input.locale,
+      }),
+    );
+    input.signal.throwIfAborted();
+    if (figmaGate) {
+      const waitingRun = await recordAgentExternalWait({
+        ownerId: input.ownerId,
+        runId: run.id,
+        attempt: run.attempt,
+        leaseId: input.execution.leaseId,
+        assistantMessage: {
           role: "assistant",
-          content: assistant.text,
-          model: harness.model,
-          meta: { kind: "reply" },
-        });
-      }
-      send({ type: ChatEventType.Done });
+          content: figmaGate.content,
+          model: input.harness.model,
+          meta: figmaGate.meta,
+        },
+      });
+      input.send({ type: ChatEventType.Chat, delta: figmaGate.content });
+      input.send({
+        type: ChatEventType.IntegrationCard,
+        meta: figmaGate.meta,
+      });
+      input.send({ type: ChatEventType.RunState, run: waitingRun });
+      input.send({ type: ChatEventType.Done });
       return;
     }
 
-    await appendMessage(conversationId, {
-      role: "assistant",
-      content: assistant.text,
-      model: harness.model,
-      meta: { toolCalls: assistant.toolCalls },
+    try {
+      const title = await withLeaseHeartbeat(
+        input.execution,
+        input.ownerId,
+        input.signal,
+        (titleSignal) => updateGeneratedTitlesFromUserMessage({
+          conversationId: run.conversationId,
+          projectId: run.projectId,
+          userMessage: input.userMessage!,
+          signal: titleSignal,
+        }),
+      );
+      if (title) {
+        input.send({
+          type: ChatEventType.Title,
+          conversationId: run.conversationId,
+          ...title,
+        });
+      }
+    } catch (error) {
+      if (input.signal.aborted) throw error;
+      console.warn("Failed to generate chat title", error);
+    }
+  }
+
+  while (true) {
+    input.signal.throwIfAborted();
+    const modelRound = await beginAgentModelRound({
+      ownerId: input.ownerId,
+      runId: run.id,
+      attempt: run.attempt,
+      leaseId: input.execution.leaseId,
+    });
+    const rows = await listMessages(run.conversationId);
+    const assistant = await withLeaseHeartbeat(
+      input.execution,
+      input.ownerId,
+      input.signal,
+      (modelSignal) => collectAssistantTurn(
+        rows,
+        input.harness,
+        input.send,
+        modelSignal,
+      ),
+    );
+    input.signal.throwIfAborted();
+
+    if (assistant.toolCalls.length === 0) {
+      const waiting = await recordAgentAssistantReply({
+        ownerId: input.ownerId,
+        runId: run.id,
+        attempt: run.attempt,
+        leaseId: input.execution.leaseId,
+        content: assistant.text,
+        model: input.harness.model,
+      });
+      input.send({ type: ChatEventType.RunState, run: waiting });
+      input.send({ type: ChatEventType.Done });
+      return;
+    }
+
+    const invocations = await recordAgentToolRound({
+      ownerId: input.ownerId,
+      runId: run.id,
+      attempt: run.attempt,
+      leaseId: input.execution.leaseId,
+      modelRound,
+      assistantText: assistant.text,
+      model: input.harness.model,
+      invocations: assistant.toolCalls.map((toolCall, callIndex) => ({
+        toolCall,
+        callIndex,
+        executionDomain: agentToolExecutionDomain(toolCall.name, storageKind),
+        effect: agentToolEffect(toolCall.name),
+      })),
     });
 
-    const clientExecution = assistant.toolCalls.map((toolCall) =>
-      clientToolRunsInBrowser(toolCall.name, storageKind)
-    );
-    const hasClientTool = clientExecution.some(Boolean);
-    const hasServerTool = clientExecution.some((runsOnClient) => !runsOnClient);
-    if (hasClientTool && hasServerTool) {
-      const message = "A tool-call round cannot mix browser-executed and server-executed tools.";
-      const rejectedResults = assistant.toolCalls.map((toolCall) => {
-        const result: ToolExecutionResult = {
-          status: "error",
-          tool: toolCall.name,
-          code: ToolExecutionErrorCode.BadArgs,
-          message,
-        };
-        return {
-          toolCall,
-          write: {
-            toolCall,
-            content: JSON.stringify(result),
-          },
-        };
+    const rejection = invalidRoundMessage(invocations);
+    if (rejection) {
+      await rejectInvalidRound({
+        execution: input.execution,
+        ownerId: input.ownerId,
+        invocations,
+        message: rejection,
+        send: input.send,
       });
-      signal.throwIfAborted();
-      const outcome = await appendPendingToolResults(
-        conversationId,
-        rejectedResults.map(({ write }) => write),
-      );
-      if (!serverToolResultsWereAppended(conversationId, outcome)) return;
-
-      for (const { toolCall } of rejectedResults) {
-        send({ type: ChatEventType.ToolResult, name: toolCall.name, status: "error" });
-      }
       continue;
     }
 
-    if (hasClientTool) {
-      const calls = assistant.toolCalls.map((toolCall) => ClientToolCallSchema.parse({
-        id: toolCall.id,
-        name: toolCall.name,
-        arguments: toolCall.arguments,
+    const domain = invocations[0].executionDomain;
+    if (domain === AgentToolExecutionDomain.Client) {
+      const waiting = await waitForAgentBoundary({
+        ownerId: input.ownerId,
+        runId: run.id,
+        attempt: run.attempt,
+        leaseId: input.execution.leaseId,
+        status: AgentRunStatus.WaitingClientTool,
+        invocationIds: invocations.map(({ id }) => id),
+      });
+      const calls = invocations.map((invocation) => ClientToolCallSchema.parse({
+        id: invocation.providerCallId,
+        name: invocation.toolName,
+        arguments: invocation.arguments,
+        invocationId: invocation.id,
+        agentRunId: invocation.agentRunId,
+        attempt: invocation.attempt,
       }));
-      send({ type: ChatEventType.ClientToolCalls, calls });
+      input.send({ type: ChatEventType.ClientToolCalls, calls });
+      input.send({ type: ChatEventType.RunState, run: waiting });
+      input.send({ type: ChatEventType.Done });
       return;
     }
 
-    const ctx: ToolExecutionContext = {
-      ownerId,
-      projectId,
-      conversationId,
-    };
-
-    for (const toolCall of assistant.toolCalls) {
-      signal.throwIfAborted();
-      const result = await executeToolCall(toolCall, ctx);
-      if (result.status === "pending" && result.tool === ToolName.GenerateImage) {
-        send({
+    if (domain === AgentToolExecutionDomain.Async) {
+      const asyncExecution = await executeAsyncInvocation({
+        execution: input.execution,
+        ownerId: input.ownerId,
+        projectId: run.projectId,
+        conversationId: run.conversationId,
+        invocation: invocations[0],
+      });
+      if (
+        asyncExecution.result.status === "pending"
+        && asyncExecution.result.tool === ToolName.GenerateImage
+        && asyncExecution.waitingRun
+      ) {
+        input.send({
           type: ChatEventType.ToolPending,
-          id: toolCall.id,
+          id: invocations[0].providerCallId,
           name: ToolName.GenerateImage,
-          runId: result.runId,
-          jobs: result.jobs,
+          runId: asyncExecution.result.runId,
+          jobs: asyncExecution.result.jobs,
         });
-        send({ type: ChatEventType.Done });
+        input.send({
+          type: ChatEventType.RunState,
+          run: asyncExecution.waitingRun,
+        });
+        input.send({ type: ChatEventType.Done });
         return;
       }
+      input.send({
+        type: ChatEventType.ToolResult,
+        name: invocations[0].toolName,
+        status: "error",
+      });
+      continue;
+    }
 
-      signal.throwIfAborted();
-      const outcome = await appendPendingToolResults(conversationId, [{
-        toolCall,
-        content: JSON.stringify(result),
-      }]);
-      if (!serverToolResultsWereAppended(conversationId, outcome)) return;
-
-      send({ type: ChatEventType.ToolResult, name: toolCall.name, status: result.status });
-
-      const changedEvent = fileChangedEvent(result);
-      if (changedEvent) send(changedEvent);
-
+    for (const invocation of invocations) {
+      input.signal.throwIfAborted();
+      const result = await executeServerInvocation({
+        execution: input.execution,
+        ownerId: input.ownerId,
+        projectId: run.projectId,
+        conversationId: run.conversationId,
+        storageKind,
+        invocation,
+        signal: input.signal,
+      });
+      if (result.status === "pending") {
+        throw new Error("Server domain returned an unhandled pending result.");
+      }
+      input.send({
+        type: ChatEventType.ToolResult,
+        name: invocation.toolName,
+        status: result.status,
+      });
+      const changed = fileChangedEvent(result);
+      if (changed) input.send(changed);
     }
   }
-
-  send({ type: ChatEventType.Error, message: TOOL_ROUND_LIMIT_MESSAGE[locale](MAX_TOOL_ROUNDS) });
 }
 
-async function prepareChatTranscript(conversationId: string): Promise<Response | null> {
-  try {
-    const readiness = await prepareTranscriptForModelInput(conversationId);
-    if (readiness === TailToolCallReadiness.WaitingAsync) {
-      return Response.json({
-        error: "async tool pending",
-        code: ChatRequestErrorCode.AsyncToolPending,
-      }, { status: 409 });
-    }
+function failureCodeFor(error: unknown) {
+  if (
+    error instanceof ToolCallStreamProtocolError
+    || error instanceof TranscriptProtocolError
+    || error instanceof AgentToolPolicyError
+  ) {
+    return AgentRunFailureCode.ProtocolError;
+  }
+  if (
+    error instanceof AgentRunServiceError
+    && error.code === AgentRunServiceErrorCode.BudgetExceeded
+  ) {
+    return AgentRunFailureCode.BudgetExhausted;
+  }
+  return AgentRunFailureCode.ModelError;
+}
+
+async function settleStreamFailure(
+  execution: AgentRunLease,
+  ownerId: string,
+  error: unknown,
+): Promise<AgentRunSnapshot | null> {
+  if (
+    error instanceof AgentRunServiceError
+    && (
+      error.code === AgentRunServiceErrorCode.LeaseLost
+      || error.code === AgentRunServiceErrorCode.AttemptMismatch
+      || error.code === AgentRunServiceErrorCode.InvalidTransition
+      || error.code === AgentRunServiceErrorCode.LateResult
+    )
+  ) {
     return null;
-  } catch (error) {
-    if (error instanceof TranscriptProtocolError || error instanceof TailToolCallError) {
-      return Response.json({
-        error: "transcript protocol error",
-        code: error.code,
-        detail: error.message,
-      }, { status: 409 });
-    }
-    throw error;
+  }
+  try {
+    return await failAgentRun({
+      ownerId,
+      runId: execution.run.id,
+      attempt: execution.run.attempt,
+      leaseId: execution.leaseId,
+      code: failureCodeFor(error),
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } catch (settleError) {
+    console.warn("Failed to persist AgentRun failure", settleError);
+    return null;
   }
 }
 
-function streamAgent(args: {
-  conversationId: string;
-  projectId: string;
-  storageKind: ProjectStorageKindValue;
-  ownerId: string;
-  created: boolean;
-  initRepository?: ProjectRepositoryDescriptor;
-  userMessage?: string;
-  locale: AppLocale;
-}, requestSignal: AbortSignal) {
+function streamAgent(
+  input: {
+    execution: AgentRunLease;
+    harness: ResolvedAgentHarness;
+    ownerId: string;
+    created: boolean;
+    userMessage?: string;
+    locale: AppLocale;
+  },
+  requestSignal: AbortSignal,
+) {
   const encoder = new TextEncoder();
-  const abortController = new AbortController();
-  const abort = () => abortController.abort(requestSignal.reason);
+  const controller = new AbortController();
+  const abort = () => controller.abort(requestSignal.reason);
   if (requestSignal.aborted) abort();
   else requestSignal.addEventListener("abort", abort, { once: true });
 
   return sseResponse(new ReadableStream({
-    async start(controller) {
-      const send = (event: ChatEvent) => {
-        if (abortController.signal.aborted) return;
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+    async start(streamController) {
+      const send = (event: ChatEventPayload) => {
+        if (controller.signal.aborted) return;
+        streamController.enqueue(encoder.encode(
+          `data: ${JSON.stringify(withRun(input.execution.run, event))}\n\n`,
+        ));
       };
 
       try {
-        await runAgentLoop({ ...args, send, signal: abortController.signal });
+        await runAgentLoop({ ...input, send, signal: controller.signal });
       } catch (error) {
-        if (!abortController.signal.aborted) {
-          send({ type: ChatEventType.Error, message: error instanceof Error ? error.message : String(error) });
+        if (!controller.signal.aborted) {
+          const failed = await settleStreamFailure(
+            input.execution,
+            input.ownerId,
+            error,
+          );
+          if (failed) send({ type: ChatEventType.RunState, run: failed });
+          send({
+            type: ChatEventType.Error,
+            message: error instanceof Error ? error.message : String(error),
+          });
         }
       } finally {
         requestSignal.removeEventListener("abort", abort);
         try {
-          controller.close();
+          await releaseAgentRunLease({
+            ownerId: input.ownerId,
+            runId: input.execution.run.id,
+            attempt: input.execution.run.attempt,
+            leaseId: input.execution.leaseId,
+          });
+        } catch (error) {
+          console.warn("Failed to release AgentRun transport lease", error);
+        }
+        try {
+          streamController.close();
         } catch {
-          // The client may already have cancelled the response stream.
+          // The client already cancelled the response stream.
         }
       }
     },
     cancel() {
-      abortController.abort();
+      controller.abort();
     },
   }));
 }
 
-function streamStaticAssistant(args: {
-  conversationId: string;
-  projectId: string;
+function streamCancelledAgentRun(input: {
+  run: AgentRunSnapshot;
   created: boolean;
-  initRepository?: ProjectRepositoryDescriptor;
-  content: string;
-  integrationCard?: IntegrationCardMeta;
 }) {
   const encoder = new TextEncoder();
-
   return sseResponse(new ReadableStream({
     start(controller) {
-      const send = (event: ChatEvent) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      const send = (event: ChatEventPayload) => {
+        controller.enqueue(encoder.encode(
+          `data: ${JSON.stringify(withRun(input.run, event))}\n\n`,
+        ));
       };
-
-      if (args.created) {
-        if (!args.initRepository) throw new Error("Missing repository descriptor for new conversation.");
+      if (input.created) {
         send({
           type: ChatEventType.Init,
-          conversationId: args.conversationId,
-          repository: args.initRepository,
+          conversationId: input.run.conversationId,
+          repository: input.run.repository,
         });
       }
-      send({ type: ChatEventType.Chat, delta: args.content });
-      if (args.integrationCard) {
-        send({ type: ChatEventType.IntegrationCard, meta: args.integrationCard });
-      }
+      send({ type: ChatEventType.RunState, run: input.run });
       send({ type: ChatEventType.Done });
       controller.close();
     },
   }));
 }
 
-function previewFeedbackMessage(result: Extract<ChatTurn, { kind: "preview_feedback" }>["result"], locale: AppLocale) {
-  if (locale === "en") {
-    if (result.status === "ok") {
-      return [
-        `Browser preview result: ${result.type}${result.durationMs ? `, ${result.durationMs}ms` : ""}.`,
-        `WebContainer dev server: ${result.url} (port ${result.port}).`,
-        result.rawLog ? `Raw npm dev output:\n${result.rawLog}` : "",
-      ].filter(Boolean).join("\n");
+function agentRunErrorResponse(error: unknown): Response {
+  if (error instanceof AgentHarnessRestoreError) {
+    return Response.json(
+      { error: "agent harness conflict", code: error.code, detail: error.message },
+      { status: 409 },
+    );
+  }
+  if (error instanceof AgentRunServiceError) {
+    const status = error.code === AgentRunServiceErrorCode.NotFound ? 404 : 409;
+    return Response.json(
+      { error: "agent run error", code: error.code, detail: error.message },
+      { status },
+    );
+  }
+  console.error("Failed to prepare AgentRun", error);
+  return Response.json(
+    { error: "internal error", detail: error instanceof Error ? error.message : String(error) },
+    { status: 500 },
+  );
+}
+
+async function createUserExecution(input: {
+  body: Extract<ChatTurn, { kind: "user" }>;
+  ownerId: string;
+  locale: AppLocale;
+}): Promise<{
+  creation: AgentRunCreation;
+  harness: ResolvedAgentHarness;
+  created: boolean;
+}> {
+  const created = !input.body.conversationId;
+  const initialTitle = makeInitialTitle(input.body.message);
+  return runInAgentRunTransaction(async (writer) => {
+    let { projectId, conversationId } = input.body;
+    let storageKind: ProjectStorageKindValue;
+
+    if (conversationId) {
+      const [owned] = await writer
+        .select({
+          projectId: projects.id,
+          storageKind: projects.storageKind,
+        })
+        .from(conversations)
+        .innerJoin(projects, eq(conversations.projectId, projects.id))
+        .where(and(
+          eq(conversations.id, conversationId),
+          eq(projects.ownerId, input.ownerId),
+          isNull(conversations.deletedAt),
+          isNull(projects.deletedAt),
+        ))
+        .limit(1);
+      if (!owned) {
+        throw new AgentRunServiceError(
+          AgentRunServiceErrorCode.NotFound,
+          "Conversation not found.",
+        );
+      }
+      if (
+        input.body.projectId
+        && input.body.projectId !== owned.projectId
+      ) {
+        throw new AgentRunServiceError(
+          AgentRunServiceErrorCode.RepositoryMismatch,
+          "Conversation does not belong to the requested project.",
+        );
+      }
+      projectId = owned.projectId;
+      storageKind = ProjectStorageKindSchema.parse(owned.storageKind);
+    } else {
+      if (projectId) {
+        const [owned] = await writer
+          .select({ storageKind: projects.storageKind })
+          .from(projects)
+          .where(and(
+            eq(projects.id, projectId),
+            eq(projects.ownerId, input.ownerId),
+            isNull(projects.deletedAt),
+          ))
+          .limit(1);
+        if (!owned) {
+          throw new AgentRunServiceError(
+            AgentRunServiceErrorCode.NotFound,
+            "Project not found.",
+          );
+        }
+        storageKind = ProjectStorageKindSchema.parse(owned.storageKind);
+      } else {
+        const [project] = await writer
+          .insert(projects)
+          .values({
+            ownerId: input.ownerId,
+            title: initialTitle,
+            storageKind: ProjectStorageKind.Database,
+          })
+          .returning({
+            id: projects.id,
+            storageKind: projects.storageKind,
+          });
+        projectId = project.id;
+        storageKind = ProjectStorageKindSchema.parse(project.storageKind);
+      }
+      const [conversation] = await writer
+        .insert(conversations)
+        .values({ projectId, title: initialTitle })
+        .returning({ id: conversations.id });
+      conversationId = conversation.id;
     }
 
-    if (result.type === ToolResultType.InstallError || result.type === ToolResultType.DevServerError) {
-      return [
-        `Browser preview failed: ${result.type}`,
-        `Command: ${result.command}`,
-        `Exit code: ${result.exitCode ?? "not exited"}`,
-        `Error message: ${result.message}`,
-        `Raw command output:\n${result.rawLog}`,
-        "Continue fixing the project files based on this real npm/Rsbuild output; do not assume the project is already running.",
-      ].join("\n");
+    const harness = agentHarnessFor(input.locale, storageKind);
+    let attachments: AttachmentSummary[] | undefined;
+    const attachmentIds = input.body.attachments?.map(({ id }) => id) ?? [];
+    if (attachmentIds.length) {
+      attachments = await attachToConversation({
+        ownerId: input.ownerId,
+        conversationId,
+        projectId,
+        attachmentIds,
+        writer,
+      });
     }
 
-    return [
-      `Browser preview failed: ${result.type}`,
-      `Error message: ${result.message}`,
-      result.type === ToolResultType.BrowserRuntimeError && result.stack ? `Stack trace: ${result.stack}` : "",
-      result.type === ToolResultType.BrowserRuntimeError && result.rawLog ? `Raw npm dev output:\n${result.rawLog}` : "",
-      "Continue fixing the project files based on this real preview result; do not assume the project is already running.",
-    ].filter(Boolean).join("\n");
-  }
-
-  if (result.status === "ok") {
-    return [
-      `浏览器预览结果：${result.type}${result.durationMs ? `，耗时 ${result.durationMs}ms` : ""}。`,
-      `WebContainer dev server：${result.url}（端口 ${result.port}）。`,
-      result.rawLog ? `npm dev 原始输出：\n${result.rawLog}` : "",
-    ].filter(Boolean).join("\n");
-  }
-
-  if (result.type === ToolResultType.InstallError || result.type === ToolResultType.DevServerError) {
-    return [
-      `浏览器预览失败：${result.type}`,
-      `执行命令：${result.command}`,
-      `退出码：${result.exitCode ?? "进程未退出"}`,
-      `错误信息：${result.message}`,
-      `原始命令输出：\n${result.rawLog}`,
-      "请根据这个真实 npm/Rsbuild 输出继续修复项目文件；不要假设项目已经能运行。",
-    ].join("\n");
-  }
-
-  return [
-    `浏览器预览失败：${result.type}`,
-    `错误信息：${result.message}`,
-    result.type === ToolResultType.BrowserRuntimeError && result.stack ? `错误堆栈：${result.stack}` : "",
-    result.type === ToolResultType.BrowserRuntimeError && result.rawLog ? `npm dev 原始输出：\n${result.rawLog}` : "",
-    "请根据这个真实预览结果继续修复项目文件；不要假设项目已经能运行。",
-  ].filter(Boolean).join("\n");
+    const creation = await createAgentRun({
+      ownerId: input.ownerId,
+      projectId,
+      conversationId,
+      requestId: input.body.requestId,
+      repository: input.body.repository,
+      harnessIdentity: harness.identity,
+      userMessage: {
+        role: "user",
+        content: input.body.message,
+        meta: attachments?.length ? { attachments } : undefined,
+      },
+      writer,
+    });
+    return { creation, harness, created };
+  });
 }
 
 export async function POST(req: Request) {
   const ownerId = ownerIdFrom(req);
   if (!ownerId) return new Response("Unauthorized", { status: 401 });
-
   const locale = requestLocale(req);
   if (locale instanceof Response) return locale;
 
-  let body: ChatTurn;
+  const parsed = ChatTurnSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return Response.json(
+      { error: "bad request", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const body = parsed.data;
+
   try {
-    body = ChatTurnSchema.parse(await req.json());
-  } catch (e) {
-    return Response.json({ error: "bad request", detail: String(e) }, { status: 400 });
-  }
-
-  if (body.kind === "resume") {
-    const projectId = await getOwnedConversationProjectId(body.conversationId, ownerId);
-    if (!projectId) return new Response("Not Found", { status: 404 });
-    const [project] = await db.select().from(projects)
-      .where(and(eq(projects.id, projectId), eq(projects.ownerId, ownerId), isNull(projects.deletedAt)))
-      .limit(1);
-    if (!project) return new Response("Not Found", { status: 404 });
-    const storageKind = ProjectStorageKindSchema.parse(project.storageKind);
-    const preparationError = await prepareChatTranscript(body.conversationId);
-    if (preparationError) return preparationError;
-    return streamAgent({ conversationId: body.conversationId, projectId, storageKind, ownerId, created: false, locale }, req.signal);
-  }
-
-  if (body.kind === "preview_feedback") {
-    const projectId = await getOwnedConversationProjectId(body.conversationId, ownerId);
-    if (!projectId) return new Response("Not Found", { status: 404 });
-    const [project] = await db.select().from(projects)
-      .where(and(eq(projects.id, projectId), eq(projects.ownerId, ownerId), isNull(projects.deletedAt)))
-      .limit(1);
-    if (!project) return new Response("Not Found", { status: 404 });
-    const storageKind = ProjectStorageKindSchema.parse(project.storageKind);
-
-    const preparationError = await prepareChatTranscript(body.conversationId);
-    if (preparationError) return preparationError;
-    await appendMessage(body.conversationId, {
-      role: "user",
-      content: previewFeedbackMessage(body.result, locale),
-      meta: { previewResult: body.result },
-    });
-
-    return streamAgent({ conversationId: body.conversationId, projectId, storageKind, ownerId, created: false, locale }, req.signal);
-  }
-
-  let { conversationId, projectId } = body;
-  const created = !conversationId;
-  const initialTitle = makeInitialTitle(body.message);
-
-  if (conversationId) {
-    if (!(await ownsConversation(conversationId, ownerId))) {
-      return new Response("Not Found", { status: 404 });
-    }
-    const ownedProjectId = await getOwnedConversationProjectId(conversationId, ownerId);
-    if (!ownedProjectId) return new Response("Not Found", { status: 404 });
-    projectId = ownedProjectId;
-  } else {
-    if (projectId) {
-      if (!(await ownsProject(projectId, ownerId))) {
-        return new Response("Not Found", { status: 404 });
-      }
-    } else {
-      // Compatibility path until the homepage creates projects explicitly before starting chat.
-      const [project] = await db.insert(projects).values({
+    if (body.kind === "resume") {
+      const execution = await acquireAgentRun({
         ownerId,
-        title: initialTitle,
-        storageKind: ProjectStorageKind.Database,
-      }).returning();
-      projectId = project.id;
+        runId: body.runId,
+        conversationId: body.conversationId,
+        expectedAttempt: body.attempt,
+        allowedStatuses: [
+          AgentRunStatus.WaitingResume,
+          AgentRunStatus.WaitingExternal,
+        ],
+      });
+      return streamAgent({
+        execution,
+        harness: restoreAgentHarness(execution.harnessIdentity),
+        ownerId,
+        created: false,
+        locale,
+      }, req.signal);
     }
-    const [conversation] = await db.insert(conversations).values({ projectId, title: initialTitle }).returning();
-    conversationId = conversation.id;
-  }
 
-  const [project] = await db.select().from(projects)
-    .where(and(
-      eq(projects.id, projectId),
-      eq(projects.ownerId, ownerId),
-      isNull(projects.deletedAt),
-    ))
-    .limit(1);
-  if (!project) return new Response("Not Found", { status: 404 });
-  const storageKind = ProjectStorageKindSchema.parse(project.storageKind);
-  const initRepository: ProjectRepositoryDescriptor | undefined = created
-    ? toProjectRepositoryDescriptor(project)
-    : undefined;
-
-  const preparationError = await prepareChatTranscript(conversationId);
-  if (preparationError) return preparationError;
-
-  let attachments: AttachmentSummary[] | undefined;
-  const attachmentIds = body.attachments?.map((attachment) => attachment.id) ?? [];
-  if (attachmentIds.length) {
-    try {
-      attachments = await attachToConversation({ ownerId, conversationId, projectId, attachmentIds });
-    } catch (error) {
-      if (error instanceof AttachmentError) {
-        return Response.json({ error: error.message, code: error.code }, { status: 400 });
-      }
-      return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    if (body.kind === "preview_feedback") {
+      const execution = await acquireAgentRun({
+        ownerId,
+        runId: body.runId,
+        conversationId: body.conversationId,
+        expectedAttempt: body.attempt,
+        allowedStatuses: [AgentRunStatus.WaitingFeedback],
+        message: {
+          role: "user",
+          content: previewFeedbackMessage(body.result, locale),
+          meta: { previewResult: body.result },
+        },
+      });
+      return streamAgent({
+        execution,
+        harness: restoreAgentHarness(execution.harnessIdentity),
+        ownerId,
+        created: false,
+        locale,
+      }, req.signal);
     }
+
+    const prepared = await createUserExecution({ body, ownerId, locale });
+    if (prepared.creation.outcome === AgentRunCreationOutcome.Cancelled) {
+      return streamCancelledAgentRun({
+        run: prepared.creation.run,
+        created: prepared.created,
+      });
+    }
+    return streamAgent({
+      execution: prepared.creation.execution,
+      harness: prepared.harness,
+      created: prepared.created,
+      ownerId,
+      userMessage: body.message,
+      locale,
+    }, req.signal);
+  } catch (error) {
+    if (error instanceof AttachmentError) {
+      return Response.json(
+        { error: error.message, code: error.code },
+        { status: 400 },
+      );
+    }
+    return agentRunErrorResponse(error);
   }
-
-  await appendMessage(conversationId, {
-    role: "user",
-    content: body.message,
-    meta: attachments?.length ? { attachments } : undefined,
-  });
-
-  const figmaGate = await maybeAppendFigmaConnectionGate({
-    ownerId,
-    conversationId,
-    message: body.message,
-    locale,
-  });
-  if (figmaGate) {
-    return streamStaticAssistant({
-      conversationId,
-      projectId,
-      created,
-      initRepository,
-      content: figmaGate.content,
-      integrationCard: figmaGate.meta,
-    });
-  }
-
-  return streamAgent({
-    conversationId,
-    projectId,
-    storageKind,
-    ownerId,
-    created,
-    initRepository,
-    userMessage: body.message,
-    locale,
-  }, req.signal);
 }

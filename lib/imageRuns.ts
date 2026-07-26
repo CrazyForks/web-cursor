@@ -11,7 +11,9 @@ import type { ImageRunView } from "@/lib/types";
 import { ImageRunStatus } from "@/types/image";
 
 export function imageRunTerminal(status: ImageRunView["status"]) {
-  return status === ImageRunStatus.Succeeded || status === ImageRunStatus.Failed;
+  return status === ImageRunStatus.Succeeded
+    || status === ImageRunStatus.Failed
+    || status === ImageRunStatus.Cancelled;
 }
 
 export function fetchImageRun(runId: string): Promise<ImageRunView> {

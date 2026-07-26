@@ -1,12 +1,24 @@
+/**
+ * [INPUT]: Chat request turns and raw SSE event payloads
+ * [OUTPUT]: Strict ChatTurn/ChatEvent runtime schemas and inferred protocol types
+ * [POS]: Shared A/B-domain chat and AgentRun streaming protocol boundary
+ * [PROTOCOL]: Every SSE event carries AgentRun identity; unknown fields and mismatched run snapshots fail closed
+ */
 import { z } from "zod";
+import {
+  AgentRunIdSchema,
+  AgentRunRequestIdSchema,
+  AgentRunSnapshotSchema,
+} from "./agentRun";
 import { ChatAttachmentRefSchema } from "./attachment";
-import { ToolResultSchema } from "./toolSchema";
-import type { PendingImageJob } from "./image";
-import type { IntegrationCardMeta } from "./integration";
-import { ToolName, type ToolName as ToolNameType } from "./tool";
+import { ClientToolCallSchema } from "./clientTool";
+import { IntegrationCardMetaSchema } from "./integration";
 import { ProjectFileOperation } from "./projectFileMutation";
-import type { ProjectRepositoryDescriptor } from "./projectRepository";
-import type { ClientToolCall } from "./clientTool";
+import { ProjectRepositoryDescriptorSchema } from "./projectRepository";
+import { ToolCallIdSchema, ToolCallNameSchema, ToolName } from "./tool";
+import { GenerateImageItemSchema, ToolResultSchema } from "./toolSchema";
+
+const AgentRunAttemptSchema = z.number().int().positive();
 
 export const ChatTurnSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -15,14 +27,20 @@ export const ChatTurnSchema = z.discriminatedUnion("kind", [
     projectId: z.string().uuid().optional(),
     conversationId: z.string().uuid().optional(),
     attachments: z.array(ChatAttachmentRefSchema).max(4).optional(),
+    requestId: AgentRunRequestIdSchema,
+    repository: ProjectRepositoryDescriptorSchema.optional(),
   }).strict(),
   z.object({
     kind: z.literal("resume"),
     conversationId: z.string().uuid(),
+    runId: AgentRunIdSchema,
+    attempt: AgentRunAttemptSchema,
   }).strict(),
   z.object({
     kind: z.literal("preview_feedback"),
     conversationId: z.string().uuid(),
+    runId: AgentRunIdSchema,
+    attempt: AgentRunAttemptSchema,
     result: ToolResultSchema,
   }).strict(),
 ]);
@@ -41,6 +59,7 @@ export const ChatEventType = {
   FilesChanged: "files_changed",
   IntegrationCard: "integration_card",
   Title: "title",
+  RunState: "run_state",
   Done: "done",
   Error: "error",
 } as const;
@@ -52,39 +71,121 @@ export const FileChangeOperation = ProjectFileOperation;
 export type FileChangeOperation =
   typeof FileChangeOperation[keyof typeof FileChangeOperation];
 
-export type ChatEvent =
-  | {
-      type: typeof ChatEventType.Init;
-      conversationId: string;
-      repository: ProjectRepositoryDescriptor;
-    }
+const ChatToolResultStatus = {
+  Ok: "ok",
+  Error: "error",
+} as const;
+
+const ChatEventRunShape = {
+  agentRunId: AgentRunIdSchema,
+  attempt: AgentRunAttemptSchema,
+};
+
+const PendingImageJobSchema = GenerateImageItemSchema.extend({
+  jobId: z.string().uuid(),
+}).strict();
+
+export const ChatEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.Init),
+    conversationId: z.string().uuid(),
+    repository: ProjectRepositoryDescriptorSchema,
+  }).strict(),
   // 旧前端仍会处理 code；新后端不再发送，等前端切到 files/tool events 后删除。
-  | { type: typeof ChatEventType.Code; delta: string }
-  | { type: typeof ChatEventType.Chat; delta: string }
-  | { type: typeof ChatEventType.ToolsCall; index: number; name: ToolNameType | string; id: string }
-  | { type: typeof ChatEventType.ClientToolCalls; calls: ClientToolCall[] }
-  | { type: typeof ChatEventType.FileWriteStream; toolCallId: string; path?: string; delta?: string }
-  | { type: typeof ChatEventType.ToolResult; name: ToolNameType | string; status: "ok" | "error" }
-  | {
-      type: typeof ChatEventType.ToolPending;
-      id: string;
-      name: typeof ToolName.GenerateImage;
-      runId: string;
-      jobs: PendingImageJob[];
-    }
-  | { type: typeof ChatEventType.IntegrationCard; meta: IntegrationCardMeta }
-  | {
-      type: typeof ChatEventType.FilesChanged;
-      operation?: FileChangeOperation;
-      path?: string;
-      oldPath?: string;
-    }
-  | {
-      type: typeof ChatEventType.Title;
-      conversationId: string;
-      title: string;
-      projectTitle?: string;
-      conversationTitle?: string;
-    }
-  | { type: typeof ChatEventType.Done }
-  | { type: typeof ChatEventType.Error; message: string };
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.Code),
+    delta: z.string(),
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.Chat),
+    delta: z.string(),
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.ToolsCall),
+    index: z.number().int().nonnegative(),
+    name: ToolCallNameSchema,
+    id: ToolCallIdSchema,
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.ClientToolCalls),
+    calls: z.array(ClientToolCallSchema),
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.FileWriteStream),
+    toolCallId: ToolCallIdSchema,
+    path: z.string().optional(),
+    delta: z.string().optional(),
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.ToolResult),
+    name: ToolCallNameSchema,
+    status: z.enum(ChatToolResultStatus),
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.ToolPending),
+    id: ToolCallIdSchema,
+    name: z.literal(ToolName.GenerateImage),
+    runId: z.string().uuid(),
+    jobs: z.array(PendingImageJobSchema),
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.IntegrationCard),
+    meta: IntegrationCardMetaSchema,
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.FilesChanged),
+    operation: z.enum(FileChangeOperation).optional(),
+    path: z.string().optional(),
+    oldPath: z.string().optional(),
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.Title),
+    conversationId: z.string().uuid(),
+    title: z.string(),
+    projectTitle: z.string().optional(),
+    conversationTitle: z.string().optional(),
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.RunState),
+    run: AgentRunSnapshotSchema,
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.Done),
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.Error),
+    message: z.string(),
+  }).strict(),
+]).superRefine((event, context) => {
+  if (event.type !== ChatEventType.RunState) return;
+  if (event.run.id !== event.agentRunId) {
+    context.addIssue({
+      code: "custom",
+      path: ["run", "id"],
+      message: "run.id must match agentRunId",
+    });
+  }
+  if (event.run.attempt !== event.attempt) {
+    context.addIssue({
+      code: "custom",
+      path: ["run", "attempt"],
+      message: "run.attempt must match attempt",
+    });
+  }
+});
+
+export type ChatEvent = z.infer<typeof ChatEventSchema>;

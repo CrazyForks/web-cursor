@@ -13,6 +13,11 @@ import { ProjectStorageKind } from "../../types/projectStorage";
 import { ToolName, ToolResultType } from "../../types/tool";
 
 const projectId = "166837f7-3342-4644-a372-8ca180dbad0a";
+const submissionIdentity = {
+  invocationId: "858ba9f0-16d1-4972-bd3e-f200cbf8f910",
+  agentRunId: "192d9dad-a5db-4c47-b4e2-d9ca04027404",
+  attempt: 2,
+};
 
 describe("client tool execution domain", () => {
   it("keeps Database file tools on the server and Browser Git file tools in the browser", () => {
@@ -30,6 +35,7 @@ describe("client tool execution domain", () => {
 describe("ClientToolResultSubmissionSchema", () => {
   it("binds project, tool call, declared tool, and exact result schema", () => {
     expect(ClientToolResultSubmissionSchema.parse({
+      ...submissionIdentity,
       projectId,
       toolCallId: "call-list",
       tool: ToolName.ListFiles,
@@ -42,6 +48,7 @@ describe("ClientToolResultSubmissionSchema", () => {
     })).toMatchObject({ projectId, toolCallId: "call-list", tool: ToolName.ListFiles });
 
     expect(ClientToolResultSubmissionSchema.parse({
+      ...submissionIdentity,
       projectId,
       toolCallId: "call-preview",
       tool: ToolName.RunPreview,
@@ -56,6 +63,7 @@ describe("ClientToolResultSubmissionSchema", () => {
 
   it("rejects a result whose tool does not match the submitted tool", () => {
     expect(() => ClientToolResultSubmissionSchema.parse({
+      ...submissionIdentity,
       projectId,
       toolCallId: "call-write",
       tool: ToolName.WriteFile,
@@ -76,6 +84,7 @@ describe("ClientToolResultSubmissionSchema", () => {
     })).toMatchObject({ tool: ToolName.GitStatus });
 
     expect(() => ClientToolResultSubmissionSchema.parse({
+      ...submissionIdentity,
       projectId,
       toolCallId: "call-stage",
       tool: ToolName.GitStage,
@@ -89,6 +98,7 @@ describe("ClientToolResultSubmissionSchema", () => {
 
   it("rejects undeclared fields instead of guessing compatibility", () => {
     expect(() => ClientToolResultSubmissionSchema.parse({
+      ...submissionIdentity,
       projectId,
       toolCallId: "call-list",
       tool: ToolName.ListFiles,
@@ -116,6 +126,7 @@ describe("ClientToolResultSubmissionSchema", () => {
     code,
   }) => {
     expect(() => ClientToolResultSubmissionSchema.parse({
+      ...submissionIdentity,
       projectId,
       toolCallId: `call-${tool}`,
       tool,

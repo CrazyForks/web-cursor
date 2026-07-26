@@ -1,8 +1,9 @@
 /**
- * [INPUT]: WebContainer project files, run event callback, terminal session request, or global prewarm request
+ * [INPUT]: WebContainer project files, run event callback, optional run AbortSignal, terminal session request, or global prewarm request
  * [OUTPUT]: dev server URL, terminal-semantics log snapshots, install/dev server errors, preview runtime bridge injection, terminal session, or warmed singleton
  * [POS]: B 域 WebContainer runtime 单例 —— boot/mount/install/start 当前运行镜像，并承载 jsh 终端
- * [PROTOCOL]: ProjectRepository 是 canonical source；进程输出保留终端原地刷新语义；预热只 boot，不 mount/install/start。
+ * [PROTOCOL]: ProjectRepository 是 canonical source；run signal 会终止 install/dev，调用方必须串行化同一单例上的 run；
+ *   进程输出保留终端原地刷新语义；预热只 boot，不 mount/install/start。
  */
 "use client";
 
@@ -29,6 +30,7 @@ const SERVER_READY_TIMEOUT_MS = 30000;
 type RunWebContainerProjectOptions = {
   files: WebContainerProjectFile[];
   onEvent: (event: WebContainerRunEvent) => void;
+  signal?: AbortSignal;
 };
 
 export type RunWebContainerProjectResult = {
@@ -261,25 +263,38 @@ export async function openWebContainerTerminal({
 export async function runWebContainerProject({
   files,
   onEvent,
+  signal,
 }: RunWebContainerProjectOptions): Promise<RunWebContainerProjectResult> {
+  signal?.throwIfAborted();
   assertWebContainerProjectContract(files);
   const tree = projectFilesToFileSystemTree(withPreviewRuntimeBridge(files));
   const webcontainer = await bootWebContainer(onEvent);
+  signal?.throwIfAborted();
 
   await stopWebContainerProject();
+  signal?.throwIfAborted();
 
   onEvent({ type: WEB_CONTAINER_RUN_EVENT.MountStart });
   await webcontainer.mount(tree);
+  signal?.throwIfAborted();
   onEvent({ type: WEB_CONTAINER_RUN_EVENT.MountReady });
 
   let installLog = "";
   onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallStart });
   const install = await webcontainer.spawn("npm", ["install"]);
+  const abortInstall = () => {
+    void stopProcess(install);
+  };
+  signal?.addEventListener("abort", abortInstall, { once: true });
+  if (signal?.aborted) abortInstall();
   void install.output.pipeTo(createLogPipe((text) => {
     installLog = appendProcessOutput(installLog, text);
     if (installLog) onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallLog, text: installLog });
   }));
-  const installExit = await install.exit;
+  const installExit = await install.exit.finally(() => {
+    signal?.removeEventListener("abort", abortInstall);
+  });
+  signal?.throwIfAborted();
   if (installExit !== 0) {
     onEvent({ type: WEB_CONTAINER_RUN_EVENT.InstallError, exitCode: installExit, rawLog: installLog });
     throw new WebContainerInstallError(installExit, installLog);
@@ -288,7 +303,7 @@ export async function runWebContainerProject({
   let devLog = "";
   onEvent({ type: WEB_CONTAINER_RUN_EVENT.DevServerStart });
   const state = runtimeState();
-  state.devProcess = await webcontainer.spawn("npm", [
+  const devProcess = await webcontainer.spawn("npm", [
     "run",
     "dev",
     "--",
@@ -297,15 +312,28 @@ export async function runWebContainerProject({
     "--port",
     String(WEB_CONTAINER_DEV_SERVER_PORT),
   ]);
-  void state.devProcess.output.pipeTo(createLogPipe((text) => {
+  state.devProcess = devProcess;
+  const abortDev = () => {
+    void stopProcess(devProcess);
+    if (state.devProcess === devProcess) state.devProcess = null;
+  };
+  signal?.addEventListener("abort", abortDev, { once: true });
+  if (signal?.aborted) abortDev();
+  void devProcess.output.pipeTo(createLogPipe((text) => {
     devLog = appendProcessOutput(devLog, text);
     if (devLog) onEvent({ type: WEB_CONTAINER_RUN_EVENT.DevServerLog, text: devLog });
   }));
 
-  const exitPromise = state.devProcess.exit.then((exitCode) => {
+  const exitPromise = devProcess.exit.then((exitCode) => {
     throw new WebContainerDevServerError(`npm run dev exited with code ${exitCode}`, exitCode, devLog);
   });
-  const ready = await Promise.race([waitForServerReady(webcontainer, () => devLog), exitPromise]);
+  const ready = await Promise.race([
+    waitForServerReady(webcontainer, () => devLog),
+    exitPromise,
+  ]).finally(() => {
+    signal?.removeEventListener("abort", abortDev);
+  });
+  signal?.throwIfAborted();
   onEvent({ type: WEB_CONTAINER_RUN_EVENT.ServerReady, port: ready.port, url: ready.url });
   return { ...ready, rawLog: devLog };
 }

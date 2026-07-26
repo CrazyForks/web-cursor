@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: Provider client tool calls, browser execution results, and AgentRun invocation identity
+ * [OUTPUT]: Strict client tool call/result submission schemas and browser execution routing predicates
+ * [POS]: Shared A/B-domain client tool protocol boundary
+ * [PROTOCOL]: provider id/toolCallId and persisted invocationId are distinct required identities; no field is inferred
+ */
 import { z } from "zod";
 import {
   GitCommitResultSchema,
@@ -52,6 +58,9 @@ export const ClientToolCallSchema = z.object({
   id: z.string().min(1),
   name: ClientToolNameSchema,
   arguments: z.string(),
+  invocationId: z.string().uuid(),
+  agentRunId: z.string().uuid(),
+  attempt: z.number().int().positive(),
 }).strict();
 
 export type ClientToolCall = z.infer<typeof ClientToolCallSchema>;
@@ -60,6 +69,9 @@ export const ClientFileToolCallSchema = z.object({
   id: z.string().min(1),
   name: ClientFileToolNameSchema,
   arguments: z.string(),
+  invocationId: z.string().uuid(),
+  agentRunId: z.string().uuid(),
+  attempt: z.number().int().positive(),
 }).strict();
 
 export type ClientFileToolCall = z.infer<typeof ClientFileToolCallSchema>;
@@ -68,6 +80,9 @@ export const ClientGitToolCallSchema = z.object({
   id: z.string().min(1),
   name: ClientGitToolNameSchema,
   arguments: z.string(),
+  invocationId: z.string().uuid(),
+  agentRunId: z.string().uuid(),
+  attempt: z.number().int().positive(),
 }).strict();
 
 export type ClientGitToolCall = z.infer<typeof ClientGitToolCallSchema>;
@@ -350,6 +365,9 @@ export type ClientGitToolResult = z.infer<typeof ClientGitToolResultSchema>;
 const SubmissionBaseShape = {
   projectId: z.string().uuid(),
   toolCallId: z.string().min(1),
+  invocationId: z.string().uuid(),
+  agentRunId: z.string().uuid(),
+  attempt: z.number().int().positive(),
 };
 
 function submissionSchema<TTool extends ClientRepositoryToolName>(

@@ -22,6 +22,9 @@ import {
   WriteFileArgsSchema,
 } from "../../types/toolSchema";
 
+type ClientFileExecutionCall =
+  Pick<ClientFileToolCall, "id" | "name" | "arguments">;
+
 function parseArgs(raw: string): unknown {
   return JSON.parse(raw);
 }
@@ -36,7 +39,7 @@ function errorResult(
 
 export async function executeClientFileTool(
   repository: ProjectRepository,
-  call: ClientFileToolCall,
+  call: ClientFileExecutionCall,
 ): Promise<ClientFileToolResult> {
   try {
     switch (call.name) {

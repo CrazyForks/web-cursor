@@ -1,5 +1,5 @@
 /**
- * [INPUT]: owner-scoped uploaded attachments and inspect_attachment requests
+ * [INPUT]: owner-scoped uploaded attachments, optional AgentRun transaction writer, and inspect_attachment requests
  * [OUTPUT]: Vercel Blob-backed attachment metadata, data URLs, and inspection results
  * [POS]: A 域 attachment 业务层 —— 上传、归属校验、会话绑定和工具读取的唯一入口
  * [PROTOCOL]: 只支持显式 schema 中声明的 attachment type/mime；不按扩展名或内容猜业务语义
@@ -45,6 +45,8 @@ export class AttachmentError extends Error {
 }
 
 type AttachmentRow = typeof chatAttachments.$inferSelect;
+type AttachmentTransaction =
+  Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 function toSummary(row: Pick<AttachmentRow, "id" | "type" | "mimeType" | "sizeBytes" | "originalName">): AttachmentSummary {
   if (row.type !== AttachmentType.Image) {
@@ -127,48 +129,55 @@ export async function uploadAttachment(ownerId: string, input: UploadAttachment)
   }
 }
 
-export async function attachToConversation({
-  ownerId,
-  conversationId,
-  projectId,
-  attachmentIds,
-}: {
+export async function attachToConversation(input: {
   ownerId: string;
   conversationId: string;
   projectId: string;
   attachmentIds: string[];
+  writer?: AttachmentTransaction;
 }): Promise<AttachmentSummary[]> {
-  if (attachmentIds.length === 0) return [];
+  if (input.attachmentIds.length === 0) return [];
 
-  const rows = await db
-    .select({
-      id: chatAttachments.id,
-      type: chatAttachments.type,
-      mimeType: chatAttachments.mimeType,
-      sizeBytes: chatAttachments.sizeBytes,
-      originalName: chatAttachments.originalName,
-    })
-    .from(chatAttachments)
-    .where(and(
-      inArray(chatAttachments.id, attachmentIds),
-      eq(chatAttachments.ownerId, ownerId),
-      isNull(chatAttachments.deletedAt),
-    ));
+  const execute = async (
+    writer: AttachmentTransaction,
+  ): Promise<AttachmentSummary[]> => {
+    const rows = await writer
+      .select({
+        id: chatAttachments.id,
+        type: chatAttachments.type,
+        mimeType: chatAttachments.mimeType,
+        sizeBytes: chatAttachments.sizeBytes,
+        originalName: chatAttachments.originalName,
+      })
+      .from(chatAttachments)
+      .where(and(
+        inArray(chatAttachments.id, input.attachmentIds),
+        eq(chatAttachments.ownerId, input.ownerId),
+        isNull(chatAttachments.deletedAt),
+      ));
 
-  if (rows.length !== attachmentIds.length) {
-    throw new AttachmentError(AttachmentErrorCode.NotFound, "One or more attachments were not found.");
-  }
+    if (rows.length !== input.attachmentIds.length) {
+      throw new AttachmentError(
+        AttachmentErrorCode.NotFound,
+        "One or more attachments were not found.",
+      );
+    }
 
-  await db
-    .update(chatAttachments)
-    .set({ projectId, conversationId })
-    .where(and(
-      inArray(chatAttachments.id, attachmentIds),
-      eq(chatAttachments.ownerId, ownerId),
-      isNull(chatAttachments.deletedAt),
-    ));
+    await writer
+      .update(chatAttachments)
+      .set({
+        projectId: input.projectId,
+        conversationId: input.conversationId,
+      })
+      .where(and(
+        inArray(chatAttachments.id, input.attachmentIds),
+        eq(chatAttachments.ownerId, input.ownerId),
+        isNull(chatAttachments.deletedAt),
+      ));
 
-  return rows.map(toSummary);
+    return rows.map(toSummary);
+  };
+  return input.writer ? execute(input.writer) : db.transaction(execute);
 }
 
 export async function listConversationAttachmentViews(

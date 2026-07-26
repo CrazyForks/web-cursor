@@ -12,6 +12,7 @@ import WorkbenchSkeleton from "@/components/workbench/WorkbenchSkeleton";
 import type { GitCommitInput } from "@/types/browserGitRepository";
 import { ProjectStorageKind } from "@/types/projectStorage";
 import type { ProjectRepositoryDescriptor } from "@/types/projectRepository";
+import type { AgentRunSnapshot } from "@/types/agentRun";
 import type { WebContainerProjectFile } from "@/lib/webcontainer/types";
 import {
   ProjectRuntimeProjectStatus,
@@ -28,8 +29,16 @@ export type ProjectSessionModel = {
   projectId: string;
   currentConversationId?: string;
   lastTitleUpdate: TitleUpdate | null;
-  openProject: (project: RepositoryProjectRef) => ProjectRepositoryDescriptor;
-  restoreConversation: (project: RepositoryProjectRef, conversationId: string, rows: StoredMessage[]) => Promise<void>;
+  openProject: (
+    project: RepositoryProjectRef,
+  ) => Promise<ProjectRepositoryDescriptor>;
+  restoreConversation: (
+    project: RepositoryProjectRef,
+    conversationId: string,
+    rows: StoredMessage[],
+    run?: AgentRunSnapshot | null,
+    prepareOnly?: boolean,
+  ) => Promise<void>;
   loadFiles: (projectId: string, preferredPath?: string) => Promise<ProjectFileSummary[]>;
   runPreview: (projectId: string) => Promise<unknown>;
   migrateToBrowserGit: (author: GitCommitInput["author"]) => Promise<boolean>;

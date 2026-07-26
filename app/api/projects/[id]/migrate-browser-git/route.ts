@@ -2,11 +2,15 @@
  * [INPUT]: project id + strict Browser Git activation body + owner header
  * [OUTPUT]: storage-discriminated Browser Git project metadata
  * [POS]: A 域 Database→Browser Git 存储激活 action route
- * [PROTOCOL]: 只在 Database source revision 未变化时原子切换唯一写源；不读取或验证浏览器文件内容
+ * [PROTOCOL]: project fence 内确认无 open AgentRun 且 source revision 未变化，才原子切换唯一写源
  */
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { db } from "@/server/db";
-import { projects } from "@/server/db/schema";
+import { agentRuns, projects } from "@/server/db/schema";
+import {
+  AgentRunServiceError,
+  AgentRunServiceErrorCode,
+} from "@/server/agentRuns";
 import { ownerIdFrom } from "@/server/owner";
 import { toProjectResponse } from "@/server/projectResponse";
 import {
@@ -15,6 +19,7 @@ import {
   ProjectStorageMigrationErrorCode,
 } from "@/server/projectStorageMigrationTransaction";
 import { ActivateBrowserGitMigrationBodySchema } from "@/types/projectMigration";
+import { AgentRunStatus } from "@/types/agentRun";
 import { ProjectStorageKind } from "@/types/projectStorage";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -34,7 +39,31 @@ export async function POST(req: Request, ctx: Ctx) {
   try {
     const row = await executeProjectStorageMigration<ProjectTransaction, ProjectRow>({
       sourceRevision: migration.data.sourceRevision,
-      transaction: (operation) => db.transaction(operation),
+      transaction: (operation) => db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${"agent-project:" + id}))`,
+        );
+        const [openRun] = await tx
+          .select({ id: agentRuns.id })
+          .from(agentRuns)
+          .where(and(
+            eq(agentRuns.ownerId, ownerId),
+            eq(agentRuns.projectId, id),
+            notInArray(agentRuns.status, [
+              AgentRunStatus.Completed,
+              AgentRunStatus.Failed,
+              AgentRunStatus.Cancelled,
+            ]),
+          ))
+          .limit(1);
+        if (openRun) {
+          throw new AgentRunServiceError(
+            AgentRunServiceErrorCode.OpenRunExists,
+            `Project has active run ${openRun.id}.`,
+          );
+        }
+        return operation(tx);
+      }),
       activate: async (tx) => {
         const [activated] = await tx.update(projects)
           .set({
@@ -68,6 +97,12 @@ export async function POST(req: Request, ctx: Ctx) {
     });
     return Response.json(toProjectResponse(row));
   } catch (error) {
+    if (error instanceof AgentRunServiceError) {
+      return Response.json(
+        { error: error.code, detail: error.message },
+        { status: error.code === AgentRunServiceErrorCode.NotFound ? 404 : 409 },
+      );
+    }
     if (error instanceof ProjectStorageMigrationError) {
       const status = error.code === ProjectStorageMigrationErrorCode.NotFound ? 404 : 409;
       return Response.json({ error: error.code, detail: error.message }, { status });

@@ -1,8 +1,9 @@
 /**
- * [INPUT]: projectId + project-local file path/content/expectedRevision，或受限的单行字面量 search query
+ * [INPUT]: projectId + project-local file path/content/expectedRevision、可选外层 DB writer，或受限的单行字面量 search query
  * [OUTPUT]: 带 project revision 的 file snapshot/mutation result，或带 1-based 行列的受限文本搜索结果
  * [POS]: A 域项目文件业务层 —— project_files 的唯一读写入口
- * [PROTOCOL]: 文件 path/search/revision 只在这里做业务规则校验；Database mutation 必须 CAS + transaction
+ * [PROTOCOL]: 文件 path/search/revision 只在这里做业务规则校验；Database mutation 必须 CAS + transaction；
+ *   传入 writer 时用嵌套 savepoint，使 mutation 与 AgentRun receipt 能共享外层原子事务且错误可独立回滚
  */
 import "server-only";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
@@ -252,10 +253,20 @@ export async function readProjectFile(projectId: string, path: string): Promise<
   return { ...toContent(row), revision };
 }
 
-type DatabaseTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type DatabaseFileTransaction =
+  Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+function mutationTransaction<TValue>(
+  writer: DatabaseFileTransaction | undefined,
+  operation: (tx: DatabaseFileTransaction) => Promise<TValue>,
+): Promise<TValue> {
+  return writer
+    ? writer.transaction(operation)
+    : db.transaction(operation);
+}
 
 async function claimProjectRevision(
-  tx: DatabaseTransaction,
+  tx: DatabaseFileTransaction,
   projectId: string,
   expectedRevision: number,
   now: Date,
@@ -309,13 +320,14 @@ export async function writeProjectFile(
   path: string,
   content: string,
   expectedRevision: number,
+  writer?: DatabaseFileTransaction,
 ): Promise<RevisionedProjectFileContent> {
   validateProjectFilePath(path);
   validateExpectedRevision(expectedRevision);
   const now = new Date();
 
-  const result = await executeRevisionedMutation<DatabaseTransaction, ProjectFileContent>({
-    transaction: (operation) => db.transaction(operation),
+  const result = await executeRevisionedMutation<DatabaseFileTransaction, ProjectFileContent>({
+    transaction: (operation) => mutationTransaction(writer, operation),
     claimRevision: (tx) => claimProjectRevision(tx, projectId, expectedRevision, now),
     mutate: async (tx) => {
       const [existing] = await tx
@@ -359,13 +371,14 @@ export async function deleteProjectFile(
   projectId: string,
   path: string,
   expectedRevision: number,
+  writer?: DatabaseFileTransaction,
 ): Promise<{ revision: number }> {
   validateProjectFilePath(path);
   validateExpectedRevision(expectedRevision);
   const now = new Date();
 
-  const result = await executeRevisionedMutation<DatabaseTransaction, void>({
-    transaction: (operation) => db.transaction(operation),
+  const result = await executeRevisionedMutation<DatabaseFileTransaction, void>({
+    transaction: (operation) => mutationTransaction(writer, operation),
     claimRevision: (tx) => claimProjectRevision(tx, projectId, expectedRevision, now),
     mutate: async (tx) => {
       const [row] = await tx
@@ -392,6 +405,7 @@ export async function renameProjectFile(
   oldPath: string,
   newPath: string,
   expectedRevision: number,
+  writer?: DatabaseFileTransaction,
 ): Promise<RevisionedProjectFileSummary> {
   validateProjectFilePath(oldPath);
   validateProjectFilePath(newPath);
@@ -403,8 +417,8 @@ export async function renameProjectFile(
   }
 
   const now = new Date();
-  const result = await executeRevisionedMutation<DatabaseTransaction, ProjectFileSummary>({
-    transaction: (operation) => db.transaction(operation),
+  const result = await executeRevisionedMutation<DatabaseFileTransaction, ProjectFileSummary>({
+    transaction: (operation) => mutationTransaction(writer, operation),
     claimRevision: (tx) => claimProjectRevision(tx, projectId, expectedRevision, now),
     mutate: async (tx) => {
       const [target] = await tx

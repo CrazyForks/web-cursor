@@ -28,6 +28,9 @@ import {
   GitUnstageArgsSchema,
 } from "../../types/toolSchema";
 
+type ClientGitExecutionCall =
+  Pick<ClientGitToolCall, "id" | "name" | "arguments">;
+
 function parseArgs(raw: string): unknown {
   return JSON.parse(raw);
 }
@@ -50,7 +53,7 @@ function changedFiles(status: GitStatusResult): GitStatusResult {
 
 export async function executeClientGitTool(
   repository: BrowserGitProjectRepository,
-  call: ClientGitToolCall,
+  call: ClientGitExecutionCall,
 ): Promise<ClientGitToolResult> {
   try {
     switch (call.name) {

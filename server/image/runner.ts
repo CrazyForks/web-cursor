@@ -1,19 +1,29 @@
 /**
  * [INPUT]: owner-scoped image run id
- * [OUTPUT]: updated image_jobs/image_runs/project_assets and closed generate_image tool result messages
+ * [OUTPUT]: updated image_jobs/image_runs/project_assets and a durably closed AgentRun invocation
  * [POS]: A 域生图 runner —— 前端只负责唤醒，服务端独立轮询指定 run 直到终态
  * [PROTOCOL]: runner 只处理 owner/runId 精确命中的 active run；provider 返回 URL/data URL 必须下载并写入 project_assets 后才暴露
  *   并发铁律：submit 和 poll 都必须先原子认领（条件 UPDATE ... RETURNING）再调 provider；
- *   closeRun 在 conversation lock 内确认 exact pending 后，才原子提交 run 终态与 tool result。
+ *   每次 provider/asset 副作用先经过 AgentRun fence；归属 AgentRun 的 run 终态、tool result 与 waiting_resume 原子提交。
  */
 import "server-only";
 import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { imageJobs, imageRuns } from "@/server/db/schema";
+import {
+  AgentRunServiceError,
+  AgentRunServiceErrorCode,
+  recordAsyncToolResult,
+  startAsyncToolEffect,
+  withAsyncToolEffectFence,
+} from "@/server/agentRuns";
 import { exactPendingGenerateImageCall } from "@/server/image/jobs";
 import { appendMessage } from "@/server/messages";
 import { pollImageProviderJob, providerError, submitImageProviderJob } from "@/server/image/provider";
 import { resolveProviderInputImages, saveGeneratedProjectAsset } from "@/server/image/storage";
+import {
+  AgentToolResultKind,
+} from "@/types/agentRun";
 import {
   ImageAssetSource,
   ImageJobErrorCode,
@@ -55,7 +65,9 @@ function errorOf(code: ImageJobErrorCode, message: string): ImageJobError {
 }
 
 function imageRunTerminal(status: ImageRunRow["status"]): boolean {
-  return status === ImageRunStatus.Succeeded || status === ImageRunStatus.Failed;
+  return status === ImageRunStatus.Succeeded
+    || status === ImageRunStatus.Failed
+    || status === ImageRunStatus.Cancelled;
 }
 
 function wait(ms: number): Promise<void> {
@@ -230,6 +242,50 @@ async function succeedJob(ctx: {
     ));
 }
 
+async function withImageRunEffectFence<T>(
+  run: ImageRunRow,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (run.agentRunId === null && run.toolInvocationId === null) {
+    return operation();
+  }
+  if (run.agentRunId === null || run.toolInvocationId === null) {
+    throw new Error(`Image run ${run.id} has incomplete AgentRun attribution.`);
+  }
+  return withAsyncToolEffectFence({
+    ownerId: run.ownerId,
+    runId: run.agentRunId,
+    invocationId: run.toolInvocationId,
+    operation,
+  });
+}
+
+async function startImageRunProviderEffect<T>(
+  run: ImageRunRow,
+  start: () => Promise<T>,
+): Promise<T> {
+  if (run.agentRunId === null && run.toolInvocationId === null) {
+    return start();
+  }
+  if (run.agentRunId === null || run.toolInvocationId === null) {
+    throw new Error(`Image run ${run.id} has incomplete AgentRun attribution.`);
+  }
+  const started = await startAsyncToolEffect({
+    ownerId: run.ownerId,
+    runId: run.agentRunId,
+    invocationId: run.toolInvocationId,
+    start,
+  });
+  return started.result;
+}
+
+async function succeedAuthorizedJob(
+  run: ImageRunRow,
+  operation: () => Promise<void>,
+): Promise<void> {
+  await withImageRunEffectFence(run, operation);
+}
+
 async function submitJob(run: ImageRunRow, job: ImageJobRow, options: { publicBaseUrl?: string }) {
   try {
     const inputImages = await resolveProviderInputImages({
@@ -238,14 +294,20 @@ async function submitJob(run: ImageRunRow, job: ImageJobRow, options: { publicBa
       conversationId: run.conversationId,
       inputImages: job.input.inputImages,
     });
-    const submitted = await submitImageProviderJob({
-      model: job.providerModel,
-      input: job.input,
-      inputImages,
-    });
+    const submitted = await startImageRunProviderEffect(
+      run,
+      () => submitImageProviderJob({
+        model: job.providerModel,
+        input: job.input,
+        inputImages,
+      }),
+    );
 
     if (submitted.status === "completed") {
-      await succeedJob({ run, job, bytes: submitted.bytes, mimeType: submitted.mimeType, publicBaseUrl: options.publicBaseUrl });
+      await succeedAuthorizedJob(
+        run,
+        () => succeedJob({ run, job, bytes: submitted.bytes, mimeType: submitted.mimeType, publicBaseUrl: options.publicBaseUrl }),
+      );
       return;
     }
 
@@ -259,38 +321,57 @@ async function submitJob(run: ImageRunRow, job: ImageJobRow, options: { publicBa
       })
       .where(and(eq(imageJobs.id, job.id), eq(imageJobs.status, ImageJobStatus.Running), isNull(imageJobs.deletedAt)));
   } catch (error) {
+    if (
+      error instanceof AgentRunServiceError
+      && error.code === AgentRunServiceErrorCode.LateResult
+    ) return;
     await failJob(job.id, providerError(error));
   }
 }
 
 async function pollJob(run: ImageRunRow, job: ImageJobRow, options: { publicBaseUrl?: string }) {
-  const startedAt = job.startedAt?.getTime() ?? job.createdAt.getTime();
-  if (Date.now() - startedAt > PROVIDER_TIMEOUT_MS) {
-    await failJob(job.id, errorOf(ImageJobErrorCode.TimedOut, "Image provider timed out."));
-    return;
+  try {
+    const startedAt = job.startedAt?.getTime() ?? job.createdAt.getTime();
+    if (Date.now() - startedAt > PROVIDER_TIMEOUT_MS) {
+      await failJob(job.id, errorOf(ImageJobErrorCode.TimedOut, "Image provider timed out."));
+      return;
+    }
+    const providerJobId = job.providerJobId;
+    if (!providerJobId) return;
+
+    const result = await startImageRunProviderEffect(
+      run,
+      () => pollImageProviderJob({
+        model: job.providerModel,
+        providerJobId,
+      }),
+    );
+    const now = new Date();
+
+    if (result.status === "running") {
+      await db
+        .update(imageJobs)
+        .set({ lastPolledAt: now, updatedAt: now })
+        .where(and(eq(imageJobs.id, job.id), eq(imageJobs.status, ImageJobStatus.Running), isNull(imageJobs.deletedAt)));
+      return;
+    }
+
+    if (result.status === "failed") {
+      await failJob(job.id, result.error);
+      return;
+    }
+
+    await succeedAuthorizedJob(
+      run,
+      () => succeedJob({ run, job, bytes: result.bytes, mimeType: result.mimeType, publicBaseUrl: options.publicBaseUrl }),
+    );
+  } catch (error) {
+    if (
+      error instanceof AgentRunServiceError
+      && error.code === AgentRunServiceErrorCode.LateResult
+    ) return;
+    throw error;
   }
-  if (!job.providerJobId) return;
-
-  const result = await pollImageProviderJob({
-    model: job.providerModel,
-    providerJobId: job.providerJobId,
-  });
-  const now = new Date();
-
-  if (result.status === "running") {
-    await db
-      .update(imageJobs)
-      .set({ lastPolledAt: now, updatedAt: now })
-      .where(and(eq(imageJobs.id, job.id), eq(imageJobs.status, ImageJobStatus.Running), isNull(imageJobs.deletedAt)));
-    return;
-  }
-
-  if (result.status === "failed") {
-    await failJob(job.id, result.error);
-    return;
-  }
-
-  await succeedJob({ run, job, bytes: result.bytes, mimeType: result.mimeType, publicBaseUrl: options.publicBaseUrl });
 }
 
 /**
@@ -307,6 +388,58 @@ async function closeRun(run: ImageRunRow, result: GenerateImageRunResult, errors
     runId: run.id,
     result,
   });
+
+  if (run.agentRunId !== null || run.toolInvocationId !== null) {
+    if (run.agentRunId === null || run.toolInvocationId === null) {
+      throw new Error(
+        `Image run ${run.id} has incomplete AgentRun attribution.`,
+      );
+    }
+    try {
+      await recordAsyncToolResult({
+        ownerId: run.ownerId,
+        runId: run.agentRunId,
+        invocationId: run.toolInvocationId,
+        providerCallId: run.toolCallId,
+        toolName: ToolName.GenerateImage,
+        kind: errors.length
+          ? AgentToolResultKind.Error
+          : AgentToolResultKind.Success,
+        content: JSON.stringify(terminalResult),
+        beforeReceipt: async (tx) => {
+          const [closed] = await tx
+            .update(imageRuns)
+            .set({
+              status,
+              result,
+              error: errors[0] ?? null,
+              updatedAt: now,
+              completedAt: now,
+            })
+            .where(and(
+              eq(imageRuns.id, run.id),
+              inArray(imageRuns.status, [
+                ImageRunStatus.Pending,
+                ImageRunStatus.Running,
+              ]),
+              isNull(imageRuns.deletedAt),
+            ))
+            .returning({ id: imageRuns.id });
+          return Boolean(closed);
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof AgentRunServiceError
+        && error.code === AgentRunServiceErrorCode.LateResult
+      ) {
+        console.warn(error.message);
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
 
   await db.transaction(async (tx) => {
     await tx.execute(
@@ -406,6 +539,7 @@ async function refreshRunStatus(runId: string) {
       ));
     return;
   }
+  if (jobs.some((job) => job.status === ImageJobStatus.Cancelled)) return;
 
   const assets = jobs
     .filter((job) => job.status === ImageJobStatus.Succeeded && job.result)

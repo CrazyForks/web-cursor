@@ -1,17 +1,18 @@
 /**
- * [INPUT]: optional projectId plus Workbench controller actions for project/chat/files/preview
+ * [INPUT]: optional projectId plus Workbench controller actions for project/chat/files/preview/AgentRun restore
  * [OUTPUT]: route-scoped project/workspace 状态、conversation list 与项目会话 actions
  * [POS]: B 域项目会话协调层 —— 先确认后端项目事实，再独立装载 workspace
  * [PROTOCOL]: 项目存在性/storage 以后端详情为准；Browser Git 本地缺失只进入 workspace.local_repository_missing。
  */
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   useProjectRuntime,
   useProjectRuntimeStoreApi,
 } from "@/components/project/ProjectRuntimeProvider";
 import { req } from "@/lib/api";
+import { getConversationAgentRun } from "@/lib/chatClient";
 import {
   ProjectDetailSchema,
   type ProjectDetail,
@@ -23,6 +24,8 @@ import type { ImageRunView } from "@/lib/types";
 import { hasCompleteReactProject } from "@/lib/projectContract";
 import { ProjectRuntimeProjectStatus } from "@/lib/projectRuntimeStore";
 import { ToolName } from "@/types/tool";
+import { ImageRunStatus } from "@/types/image";
+import { AgentRunStatus, type AgentRunSnapshot } from "@/types/agentRun";
 import { ProjectStorageKind } from "@/types/projectStorage";
 import {
   type ProjectRepositoryDescriptor,
@@ -40,10 +43,18 @@ type UseProjectSessionParams = {
   projectId?: string;
   currentConversationId?: string;
   lastTitleUpdate: TitleUpdate | null;
-  openProject: (project: RepositoryProjectRef) => ProjectRepositoryDescriptor;
-  restoreConversation: (project: RepositoryProjectRef, conversationId: string, rows: StoredMessage[]) => Promise<void>;
+  openProject: (
+    project: RepositoryProjectRef,
+  ) => Promise<ProjectRepositoryDescriptor>;
+  restoreConversation: (
+    project: RepositoryProjectRef,
+    conversationId: string,
+    rows: StoredMessage[],
+    run?: AgentRunSnapshot | null,
+    prepareOnly?: boolean,
+  ) => Promise<void>;
   loadFiles: (projectId: string, preferredPath?: string) => Promise<ProjectFileSummary[]>;
-  runPreview: (projectId: string) => Promise<unknown>;
+  runPreview: (projectId: string, signal?: AbortSignal) => Promise<unknown>;
   onToast: (message: string) => void;
 };
 
@@ -55,10 +66,24 @@ function assistantToolCallIds(meta: unknown): string[] {
     .map((toolCall) => toolCall.id as string);
 }
 
-function attachImageRuns(rows: StoredMessage[], imageRuns: ImageRunView[]): StoredMessage[] {
+function attachImageRuns(
+  rows: StoredMessage[],
+  imageRuns: ImageRunView[],
+  agentRun: AgentRunSnapshot | null,
+): StoredMessage[] {
   const byToolCallId = new Map<string, ImageRunView[]>();
   for (const run of imageRuns) {
-    byToolCallId.set(run.toolCallId, [...(byToolCallId.get(run.toolCallId) ?? []), run]);
+    const resumeOnTerminal = agentRun?.status === AgentRunStatus.WaitingAsyncTool
+      && run.agentRunId === agentRun.id
+      && (
+        run.status === ImageRunStatus.Pending
+        || run.status === ImageRunStatus.Running
+      );
+    const restoredRun = resumeOnTerminal ? { ...run, resumeOnTerminal: true } : run;
+    byToolCallId.set(
+      run.toolCallId,
+      [...(byToolCallId.get(run.toolCallId) ?? []), restoredRun],
+    );
   }
 
   return rows.map((row) => {
@@ -66,6 +91,18 @@ function attachImageRuns(rows: StoredMessage[], imageRuns: ImageRunView[]): Stor
     const runs = assistantToolCallIds(row.meta).flatMap((toolCallId) => byToolCallId.get(toolCallId) ?? []);
     return runs.length ? { ...row, imageRuns: runs } : row;
   });
+}
+
+function hasActiveAttributedImageRun(
+  imageRuns: ImageRunView[],
+  agentRunId: string,
+): boolean {
+  return imageRuns.some((run) =>
+    run.agentRunId === agentRunId
+    && (
+      run.status === ImageRunStatus.Pending
+      || run.status === ImageRunStatus.Running
+    ));
 }
 
 export function useProjectSession({
@@ -85,24 +122,56 @@ export function useProjectSession({
     ? projectState.detail
     : null;
   const [loadingConversationId, setLoadingConversationId] = useState<string | null>(null);
+  const conversationLoadGenerationRef = useRef(0);
 
   const openConversationForProject = useCallback(
     async (detail: ProjectDetail, conversationId: string) => {
+      const loadGeneration = ++conversationLoadGenerationRef.current;
       setLoadingConversationId(conversationId);
       try {
-        const [rows, imageRuns] = await Promise.all([
+        await restoreConversation(detail, conversationId, [], null, true);
+        if (conversationLoadGenerationRef.current !== loadGeneration) return;
+        const [rows, initialImageRuns, initialAgentRunResponse] = await Promise.all([
           req<StoredMessage[]>("GET", `/api/conversations/${conversationId}/messages`),
           req<ImageRunView[]>("GET", `/api/conversations/${conversationId}/image-runs`),
+          getConversationAgentRun(conversationId),
         ]);
+        if (conversationLoadGenerationRef.current !== loadGeneration) return;
+        let imageRuns = initialImageRuns;
+        let agentRun = initialAgentRunResponse.run;
+        if (
+          agentRun?.status === AgentRunStatus.WaitingAsyncTool
+          && !hasActiveAttributedImageRun(imageRuns, agentRun.id)
+        ) {
+          imageRuns = await req<ImageRunView[]>(
+            "GET",
+            `/api/conversations/${conversationId}/image-runs`,
+          );
+          if (conversationLoadGenerationRef.current !== loadGeneration) return;
+          agentRun = (await getConversationAgentRun(conversationId)).run;
+          if (conversationLoadGenerationRef.current !== loadGeneration) return;
+          if (
+            agentRun?.status === AgentRunStatus.WaitingAsyncTool
+            && !hasActiveAttributedImageRun(imageRuns, agentRun.id)
+          ) {
+            throw new Error(
+              `PROTOCOL_VIOLATION: AgentRun ${agentRun.id} is waiting for an attributed active image run.`,
+            );
+          }
+        }
         await restoreConversation(
           detail,
           conversationId,
-          attachImageRuns(rows, imageRuns),
+          attachImageRuns(rows, imageRuns, agentRun),
+          agentRun,
         );
       } catch (e) {
+        if (conversationLoadGenerationRef.current !== loadGeneration) return;
         onToast(String(e instanceof Error ? e.message : e));
       } finally {
-        setLoadingConversationId(null);
+        if (conversationLoadGenerationRef.current === loadGeneration) {
+          setLoadingConversationId(null);
+        }
       }
     },
     [onToast, restoreConversation]
@@ -111,6 +180,8 @@ export function useProjectSession({
   const loadProject = useCallback(async () => {
     if (!projectId) return;
 
+    conversationLoadGenerationRef.current += 1;
+    setLoadingConversationId(null);
     runtimeStore.getState().loadProject(projectId);
     let detail: ProjectDetail;
     try {
@@ -128,7 +199,7 @@ export function useProjectSession({
     runtimeStore.getState().setWorkspaceLoading(detail.id);
     let descriptor: ProjectRepositoryDescriptor;
     try {
-      descriptor = openProject(detail);
+      descriptor = await openProject(detail);
       await loadFiles(detail.id);
       runtimeStore.getState().setWorkspaceReady(descriptor);
     } catch (error) {
@@ -170,8 +241,10 @@ export function useProjectSession({
 
   const newConversation = useCallback(() => {
     if (!projectDetail) return;
-    openProject(projectDetail);
-  }, [openProject, projectDetail]);
+    void openProject(projectDetail).catch((error) => {
+      onToast(String(error instanceof Error ? error.message : error));
+    });
+  }, [onToast, openProject, projectDetail]);
 
   useEffect(() => {
     if (!lastTitleUpdate) return;

@@ -1,6 +1,14 @@
-import type { AppLocale } from "@/i18n/locales";
+/**
+ * [INPUT]: Persisted Agent harness identity JSON and versioned profile constants
+ * [OUTPUT]: Strict identity/selection schemas plus shared harness identity types
+ * [POS]: Cross-domain persisted AgentRun harness contract
+ * [PROTOCOL]: Reject unknown fields and unknown finite values; digests are exactly 64 lowercase hex characters
+ */
+import { z } from "zod";
+import { locales, type AppLocale } from "@/i18n/locales";
 import {
   ProjectStorageKind,
+  ProjectStorageKindSchema,
   type ProjectStorageKind as ProjectStorageKindValue,
 } from "@/types/projectStorage";
 
@@ -53,6 +61,33 @@ export type AgentHarnessProfileSelection = Readonly<{
     typeof AgentHarnessProfileId.RepositoryCapability
   >;
 }>;
+
+const AgentHarnessSystemPromptProfileRefSchema = z.object({
+  id: z.literal(AgentHarnessProfileId.SystemPrompt),
+  version: z.number().int().positive(),
+}).strict();
+
+const AgentHarnessToolsetProfileRefSchema = z.object({
+  id: z.literal(AgentHarnessProfileId.Toolset),
+  version: z.number().int().positive(),
+}).strict();
+
+const AgentHarnessModelProfileRefSchema = z.object({
+  id: z.literal(AgentHarnessProfileId.Model),
+  version: z.number().int().positive(),
+}).strict();
+
+const AgentHarnessRepositoryCapabilityProfileRefSchema = z.object({
+  id: z.literal(AgentHarnessProfileId.RepositoryCapability),
+  version: z.number().int().positive(),
+}).strict();
+
+export const AgentHarnessProfileSelectionSchema = z.object({
+  systemPrompt: AgentHarnessSystemPromptProfileRefSchema,
+  toolset: AgentHarnessToolsetProfileRefSchema,
+  model: AgentHarnessModelProfileRefSchema,
+  repositoryCapability: AgentHarnessRepositoryCapabilityProfileRefSchema,
+}).strict();
 
 /**
  * 新 Run 必须显式选择这一组 ref；未来恢复旧 Run 时传入该 Run 已持久化的 selection，
@@ -169,6 +204,61 @@ export type AgentHarnessIdentity = Readonly<{
   repositoryCapability: AgentHarnessRepositoryCapabilityIdentity;
   staticPrefixDigest: string;
 }>;
+
+const AgentHarnessDigestSchema = z.string().regex(/^[0-9a-f]{64}$/);
+
+const AgentHarnessThinkingSchema = z.object({
+  type: z.literal(AgentHarnessThinkingType.Disabled),
+}).strict();
+
+const AgentHarnessModelRequestConfigSchema = z.object({
+  provider: z.enum(AgentHarnessProvider),
+  baseURL: z.string().min(1),
+  model: z.string().min(1),
+  stream: z.literal(true),
+  toolChoice: z.enum(AgentHarnessToolChoice),
+  thinking: AgentHarnessThinkingSchema,
+  extraGenerationParameters: z.object({}).strict(),
+}).strict();
+
+const AgentHarnessSystemPromptIdentitySchema = z.object({
+  profileId: z.literal(AgentHarnessProfileId.SystemPrompt),
+  profileVersion: z.number().int().positive(),
+  renderedDigest: AgentHarnessDigestSchema,
+}).strict();
+
+const AgentHarnessToolsetIdentitySchema = z.object({
+  profileId: z.literal(AgentHarnessProfileId.Toolset),
+  profileVersion: z.number().int().positive(),
+  toolOrder: z.array(z.string().min(1)),
+  schemaDigest: AgentHarnessDigestSchema,
+}).strict();
+
+const AgentHarnessModelIdentitySchema = z.object({
+  profileId: z.literal(AgentHarnessProfileId.Model),
+  profileVersion: z.number().int().positive(),
+  request: AgentHarnessModelRequestConfigSchema,
+  configDigest: AgentHarnessDigestSchema,
+}).strict();
+
+const AgentHarnessRepositoryCapabilityIdentitySchema = z.object({
+  profileId: z.literal(AgentHarnessProfileId.RepositoryCapability),
+  profileVersion: z.number().int().positive(),
+  renderedDigest: AgentHarnessDigestSchema,
+}).strict();
+
+export const AgentHarnessIdentitySchema = z.object({
+  schemaVersion: z.literal(AgentHarnessIdentitySchemaVersion),
+  digestAlgorithm: z.literal(AgentHarnessDigestAlgorithm.Sha256),
+  locale: z.enum(locales),
+  storageKind: ProjectStorageKindSchema,
+  selection: AgentHarnessProfileSelectionSchema,
+  systemPrompt: AgentHarnessSystemPromptIdentitySchema,
+  toolset: AgentHarnessToolsetIdentitySchema,
+  model: AgentHarnessModelIdentitySchema,
+  repositoryCapability: AgentHarnessRepositoryCapabilityIdentitySchema,
+  staticPrefixDigest: AgentHarnessDigestSchema,
+}).strict();
 
 export type AgentHarnessIdentityInput = Readonly<{
   locale: AppLocale;

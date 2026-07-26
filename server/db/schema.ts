@@ -1,17 +1,37 @@
 /**
  * [INPUT]: 无（纯表定义）
  * [OUTPUT]: drizzle 表对象，供 lib/db/index.ts 与各 Route Handler import
- * [POS]: A 域持久层 schema —— Cursor 模型：项目=共享代码库，项目下多条对话线索
- *   关系：projects 1—N {project_files(共享代码), conversations 1—N messages}
+ * [POS]: A 域持久层 schema —— 项目、会话、AgentRun ledger 与工具闭合记录的权威存储
+ *   关系：projects 1—N conversations 1—N {agent_runs, messages}
+ *   request stop intent 按 owner/request 唯一；agent_runs 1—N tool_invocations 1—1 tool_results，并可关联 image_runs
  * [PROTOCOL]: 改表先改这里 + 跑 pnpm db:push
  *   - 代码(project_files)挂项目、**会话间共享**：切会话只换聊天记录，代码不随会话变
  *   - seq 用 identity（多实例防竞态，禁 MAX+1）
- *   - 四表均软删 deleted_at（null=存活）；所有读 filter isNull(deletedAt)，DELETE=软删
+ *   - AgentRun/tool ledger 不软删；已有业务实体仍按各自 deleted_at 契约过滤
  */
 import {
-  pgTable, uuid, text, timestamp, jsonb, bigint, index, uniqueIndex, integer,
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  jsonb,
+  bigint,
+  index,
+  uniqueIndex,
+  integer,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { AgentHarnessIdentity } from "../../types/agentHarness";
+import type {
+  AgentRunDiagnosticCode as AgentRunDiagnosticCodeValue,
+  AgentRunFailureCode as AgentRunFailureCodeValue,
+  AgentRunStatus as AgentRunStatusValue,
+  AgentRunTrigger as AgentRunTriggerValue,
+  AgentToolEffect as AgentToolEffectValue,
+  AgentToolExecutionDomain as AgentToolExecutionDomainValue,
+  AgentToolResultKind as AgentToolResultKindValue,
+} from "../../types/agentRun";
 import type {
   GenerateImageItemInput,
   GenerateImageJobResult,
@@ -24,6 +44,7 @@ import type {
   ImageProviderModel,
   ImageRunStatus,
 } from "../../types/image";
+import type { ProjectRepositoryDescriptor } from "../../types/projectRepository";
 import type { ShowcaseArtifactStatus } from "../../types/showcaseArtifact";
 import { ProjectStorageKind, type ProjectStorageKind as ProjectStorageKindValue } from "../../types/projectStorage";
 
@@ -65,9 +86,84 @@ export const conversations = pgTable("conversations", {
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
+export const agentRuns = pgTable("agent_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("owner_id").notNull(),
+  projectId: uuid("project_id").notNull().references(() => projects.id),
+  conversationId: uuid("conversation_id").notNull().references(() => conversations.id),
+  requestId: uuid("request_id").notNull(),
+  trigger: text("trigger").$type<AgentRunTriggerValue>().notNull(),
+  status: text("status").$type<AgentRunStatusValue>().notNull(),
+  attempt: integer("attempt").notNull().default(1),
+  leaseId: uuid("lease_id"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+  harnessIdentity: jsonb("harness_identity").$type<AgentHarnessIdentity>().notNull(),
+  repository: jsonb("repository").$type<ProjectRepositoryDescriptor>().notNull(),
+  modelRounds: integer("model_rounds").notNull().default(0),
+  toolRounds: integer("tool_rounds").notNull().default(0),
+  maxModelRounds: integer("max_model_rounds").notNull(),
+  maxToolRounds: integer("max_tool_rounds").notNull(),
+  failureCode: text("failure_code").$type<AgentRunFailureCodeValue>(),
+  failureMessage: text("failure_message"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (t) => ({
+  ownerStatusCreatedIdx: index("idx_agent_runs_owner_status_created")
+    .on(t.ownerId, t.status, t.createdAt),
+  conversationCreatedIdx: index("idx_agent_runs_conversation_created")
+    .on(t.conversationId, t.createdAt),
+  projectStatusCreatedIdx: index("idx_agent_runs_project_status_created")
+    .on(t.projectId, t.status, t.createdAt),
+  ownerRequestUnique: uniqueIndex("uq_agent_runs_owner_request")
+    .on(t.ownerId, t.requestId),
+  attemptPositive: check("ck_agent_runs_attempt_positive", sql`${t.attempt} > 0`),
+  modelRoundsNonnegative: check(
+    "ck_agent_runs_model_rounds_nonnegative",
+    sql`${t.modelRounds} >= 0`,
+  ),
+  toolRoundsNonnegative: check(
+    "ck_agent_runs_tool_rounds_nonnegative",
+    sql`${t.toolRounds} >= 0`,
+  ),
+  maxModelRoundsPositive: check(
+    "ck_agent_runs_max_model_rounds_positive",
+    sql`${t.maxModelRounds} > 0`,
+  ),
+  maxToolRoundsPositive: check(
+    "ck_agent_runs_max_tool_rounds_positive",
+    sql`${t.maxToolRounds} > 0`,
+  ),
+}));
+
+export const agentRunStopIntents = pgTable("agent_run_stop_intents", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("owner_id").notNull(),
+  requestId: uuid("request_id").notNull(),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  agentRunId: uuid("agent_run_id").references(() => agentRuns.id),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+}, (t) => ({
+  ownerRequestUnique: uniqueIndex("uq_agent_run_stop_intents_owner_request")
+    .on(t.ownerId, t.requestId),
+  agentRunUnique: uniqueIndex("uq_agent_run_stop_intents_agent_run")
+    .on(t.agentRunId)
+    .where(sql`${t.agentRunId} is not null`),
+  consumptionComplete: check(
+    "ck_agent_run_stop_intents_consumption_complete",
+    sql`(${t.agentRunId} is null and ${t.consumedAt} is null)
+      or (${t.agentRunId} is not null and ${t.consumedAt} is not null)`,
+  ),
+}));
+
 export const messages = pgTable("messages", {
   id: uuid("id").primaryKey().defaultRandom(),
   conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+  // Legacy transcript rows predate AgentRun and intentionally remain null.
+  agentRunId: uuid("agent_run_id").references(() => agentRuns.id, { onDelete: "set null" }),
   // 全局自增，Postgres 原子分配；多实例并发写不竞态。只用于会话内 ORDER BY，跳号无所谓。
   seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity(),
   role: text("role").notNull(),              // user | assistant | tool | system
@@ -76,13 +172,88 @@ export const messages = pgTable("messages", {
   meta: jsonb("meta"),                       // tool 结果细节 / { kind:'code'|'reply', attempt, stack }
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
-}, (t) => ({ convIdx: index("idx_messages_conv").on(t.conversationId, t.seq) }));
+}, (t) => ({
+  convIdx: index("idx_messages_conv").on(t.conversationId, t.seq),
+  runSeqIdx: index("idx_messages_run_seq").on(t.agentRunId, t.seq),
+}));
+
+export const agentToolInvocations = pgTable("agent_tool_invocations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  agentRunId: uuid("agent_run_id").notNull().references(() => agentRuns.id),
+  assistantMessageId: uuid("assistant_message_id").notNull().references(() => messages.id),
+  attempt: integer("attempt").notNull(),
+  modelRound: integer("model_round").notNull(),
+  callIndex: integer("call_index").notNull(),
+  providerCallId: text("provider_call_id").notNull(),
+  toolName: text("tool_name").notNull(),
+  arguments: text("arguments").notNull(),
+  executionDomain: text("execution_domain")
+    .$type<AgentToolExecutionDomainValue>()
+    .notNull(),
+  effect: text("effect").$type<AgentToolEffectValue>().notNull(),
+  dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  runRoundCallUnique: uniqueIndex("uq_agent_tool_invocations_run_round_call")
+    .on(t.agentRunId, t.modelRound, t.callIndex),
+  runCreatedIdx: index("idx_agent_tool_invocations_run_created")
+    .on(t.agentRunId, t.createdAt),
+  attemptPositive: check(
+    "ck_agent_tool_invocations_attempt_positive",
+    sql`${t.attempt} > 0`,
+  ),
+  modelRoundPositive: check(
+    "ck_agent_tool_invocations_model_round_positive",
+    sql`${t.modelRound} > 0`,
+  ),
+  callIndexNonnegative: check(
+    "ck_agent_tool_invocations_call_index_nonnegative",
+    sql`${t.callIndex} >= 0`,
+  ),
+}));
+
+export const agentToolResults = pgTable("agent_tool_results", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  agentRunId: uuid("agent_run_id").notNull().references(() => agentRuns.id),
+  invocationId: uuid("invocation_id").notNull().references(() => agentToolInvocations.id),
+  messageId: uuid("message_id").notNull().references(() => messages.id),
+  kind: text("kind").$type<AgentToolResultKindValue>().notNull(),
+  // Preserve the exact provider/tool result bytes for deterministic transcript replay.
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  invocationUnique: uniqueIndex("uq_agent_tool_results_invocation")
+    .on(t.invocationId),
+  runCreatedIdx: index("idx_agent_tool_results_run_created")
+    .on(t.agentRunId, t.createdAt),
+}));
+
+export const agentRunDiagnostics = pgTable("agent_run_diagnostics", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  agentRunId: uuid("agent_run_id").notNull().references(() => agentRuns.id),
+  attempt: integer("attempt").notNull(),
+  code: text("code").$type<AgentRunDiagnosticCodeValue>().notNull(),
+  invocationId: uuid("invocation_id").references(() => agentToolInvocations.id),
+  detail: text("detail").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  runCreatedIdx: index("idx_agent_run_diagnostics_run_created")
+    .on(t.agentRunId, t.createdAt),
+  attemptPositive: check(
+    "ck_agent_run_diagnostics_attempt_positive",
+    sql`${t.attempt} > 0`,
+  ),
+}));
 
 export const imageRuns = pgTable("image_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
   ownerId: text("owner_id").notNull(),
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+  // Legacy image runs predate AgentRun/tool invocation attribution and remain null.
+  agentRunId: uuid("agent_run_id").references(() => agentRuns.id),
+  toolInvocationId: uuid("tool_invocation_id").references(() => agentToolInvocations.id),
   toolCallId: text("tool_call_id").notNull(),
   status: text("status").$type<ImageRunStatus>().notNull(),
   result: jsonb("result").$type<GenerateImageRunResult>(),
@@ -95,7 +266,12 @@ export const imageRuns = pgTable("image_runs", {
 }, (t) => ({
   ownerStatusIdx: index("idx_image_runs_owner_status").on(t.ownerId, t.status, t.createdAt),
   conversationStatusIdx: index("idx_image_runs_conversation_status").on(t.conversationId, t.status, t.createdAt),
-  toolCallUnique: uniqueIndex("uq_image_runs_tool_call").on(t.conversationId, t.toolCallId).where(sql`${t.deletedAt} is null`),
+  legacyToolCallUnique: uniqueIndex("uq_image_runs_legacy_tool_call")
+    .on(t.conversationId, t.toolCallId)
+    .where(sql`${t.toolInvocationId} is null and ${t.deletedAt} is null`),
+  toolInvocationUnique: uniqueIndex("uq_image_runs_tool_invocation")
+    .on(t.toolInvocationId)
+    .where(sql`${t.toolInvocationId} is not null and ${t.deletedAt} is null`),
 }));
 
 export const imageJobs = pgTable("image_jobs", {

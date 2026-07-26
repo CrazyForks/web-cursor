@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   useProjectRuntime,
   useProjectRuntimeStoreApi,
@@ -22,6 +22,11 @@ import {
   type ProjectRuntimeStoreApi,
 } from "@/lib/projectRuntimeStore";
 import { ChatEventType, type ChatEvent } from "@/types/chat";
+import {
+  AgentRunStatus,
+  agentRunIsTerminal,
+  type AgentRunSnapshot,
+} from "@/types/agentRun";
 import { ProjectStorageKind } from "@/types/projectStorage";
 import {
   type ProjectRepositoryDescriptor,
@@ -78,6 +83,7 @@ export function useWorkbenchController(options: {
   const files = useProjectFiles();
   const preview = usePreview(files.readProjectFiles);
   const [projName, setProjName] = useState(tCommon("untitledProject"));
+  const conversationRestoreGenerationRef = useRef(0);
 
   const handlePersistedFileChange = useCallback(
     async (change: PersistedFileChange | null, source: "ai" | "user") => {
@@ -128,7 +134,9 @@ export function useWorkbenchController(options: {
       const change = await files.syncFileChange(ev);
       return handlePersistedFileChange(change, "ai");
     },
+    getRepositoryDescriptor: files.getRepositoryDescriptor,
     runPreview: preview.runPreview,
+    cancelPreview: preview.cancelPreview,
     setPreviewStatus: preview.setStatus,
     onError: (error: unknown) => {
       preview.setOverlay({
@@ -157,6 +165,7 @@ export function useWorkbenchController(options: {
     files.loadFiles,
     files.executeClientFileTool,
     files.executeClientGitTool,
+    files.getRepositoryDescriptor,
     files.setProjectRepository,
     files.setProjectFiles,
     files.syncFileChange,
@@ -164,6 +173,7 @@ export function useWorkbenchController(options: {
     onProjectInitialized,
     projectRuntimeStore,
     preview.runPreview,
+    preview.cancelPreview,
     preview.setOverlay,
     preview.setStatus,
   ]);
@@ -173,10 +183,11 @@ export function useWorkbenchController(options: {
     ? projectRuntimeState.detail.storageKind
     : undefined;
 
-  const openProject = useCallback((project: RepositoryProjectRef) => {
+  const openProject = useCallback(async (project: RepositoryProjectRef) => {
+    await chat.openProjectChat({ id: project.id, title: project.title });
+    conversationRestoreGenerationRef.current += 1;
     setProjName(project.title || tCommon("untitledProject"));
     const descriptor = files.setProjectFiles(project);
-    chat.openProjectChat({ id: project.id, title: project.title });
     preview.resetPreview(
       files.hasCompleteReactProject(
         project.storageKind === ProjectStorageKind.Database ? project.files ?? [] : [],
@@ -195,17 +206,44 @@ export function useWorkbenchController(options: {
   ]);
 
   const openConversation = useCallback(
-    async (project: RepositoryProjectRef, conversationId: string, rows: StoredMessage[]) => {
+    async (
+      project: RepositoryProjectRef,
+      conversationId: string,
+      rows: StoredMessage[],
+      run: AgentRunSnapshot | null = null,
+      prepareOnly = false,
+    ) => {
+      const restoreGeneration = ++conversationRestoreGenerationRef.current;
       setProjName(project.title || tCommon("untitledProject"));
-      await chat.openConversation({ id: project.id, title: project.title }, conversationId, rows);
+      await chat.openConversation(
+        { id: project.id, title: project.title },
+        conversationId,
+        rows,
+        run,
+      );
+      if (prepareOnly) return;
       const loadedFiles = await files.loadFiles(project.id, APP_ENTRY_PATH);
-      if (files.hasCompleteReactProject(loadedFiles)) {
-        await preview.runPreview(project.id);
+      if (conversationRestoreGenerationRef.current !== restoreGeneration) return;
+      const projectIsComplete = files.hasCompleteReactProject(loadedFiles);
+      const previewWasRun = projectIsComplete
+        && (
+          !run
+          || run.status === AgentRunStatus.WaitingFeedback
+          || agentRunIsTerminal(run.status)
+        );
+      if (previewWasRun) {
+        const result = await preview.runPreview(project.id);
+        if (conversationRestoreGenerationRef.current !== restoreGeneration) return;
+        await chat.finishConversationRestore(run, result, true);
       } else {
-        preview.resetPreview(tPreview("completeProjectFirst"));
+        if (!projectIsComplete) {
+          preview.resetPreview(tPreview("completeProjectFirst"));
+        }
+        await chat.finishConversationRestore(run, null, false);
       }
     },
     [
+      chat.finishConversationRestore,
       chat.openConversation,
       files.hasCompleteReactProject,
       files.loadFiles,

@@ -5,6 +5,7 @@ export const ImageRunStatus = {
   Running: "running",
   Succeeded: "succeeded",
   Failed: "failed",
+  Cancelled: "cancelled",
 } as const;
 
 export type ImageRunStatus = typeof ImageRunStatus[keyof typeof ImageRunStatus];
@@ -12,6 +13,8 @@ export type ImageRunStatus = typeof ImageRunStatus[keyof typeof ImageRunStatus];
 export const ImageRunLifecycleErrorCode = {
   ToolCallNotPending: "IMAGE_TOOL_CALL_NOT_PENDING",
   ToolCallClosed: "IMAGE_TOOL_CALL_CLOSED",
+  AttributionIncomplete: "IMAGE_ATTRIBUTION_INCOMPLETE",
+  AttributionConflict: "IMAGE_ATTRIBUTION_CONFLICT",
 } as const;
 
 export type ImageRunLifecycleErrorCode =
@@ -32,6 +35,7 @@ export const ImageJobStatus = {
   Running: "running",
   Succeeded: "succeeded",
   Failed: "failed",
+  Cancelled: "cancelled",
 } as const;
 
 export type ImageJobStatus = typeof ImageJobStatus[keyof typeof ImageJobStatus];
@@ -96,6 +100,7 @@ export const ImageJobErrorCode = {
   UnsafeRequest: "IMAGE_UNSAFE_REQUEST",
   StorageFailed: "IMAGE_STORAGE_FAILED",
   AssetWriteFailed: "IMAGE_ASSET_WRITE_FAILED",
+  AgentRunCancelled: "IMAGE_AGENT_RUN_CANCELLED",
 } as const;
 
 export type ImageJobErrorCode = typeof ImageJobErrorCode[keyof typeof ImageJobErrorCode];

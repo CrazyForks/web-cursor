@@ -49,6 +49,7 @@ export type ImageJobView = {
 
 export type ImageRunView = {
   runId: string;
+  agentRunId?: string | null;
   toolCallId: string;
   status: ImageRunStatus;
   jobs: ImageJobView[];

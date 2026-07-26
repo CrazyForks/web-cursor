@@ -16,6 +16,7 @@ import { executeClientGitTool as executeRepositoryGitTool } from "@/lib/projectR
 import type { WebContainerProjectFile } from "@/lib/webcontainer/types";
 import { ChatEventType, type ChatEvent } from "@/types/chat";
 import {
+  ProjectRepositoryDescriptorSchema,
   type ProjectRepository,
   type ProjectRepositoryDescriptor,
   ProjectRepositoryError,
@@ -169,6 +170,15 @@ export function useProjectFiles() {
     },
     [requireRepository]
   );
+
+  const getRepositoryDescriptor = useCallback((projectId: string): ProjectRepositoryDescriptor => {
+    const repository = requireRepository(projectId);
+    return ProjectRepositoryDescriptorSchema.parse({
+      projectId: repository.projectId,
+      storageKind: repository.storageKind,
+      revision: repository.getRevision(),
+    });
+  }, [requireRepository]);
 
   const executeClientFileTool = useCallback(
     async (projectId: string, call: ClientFileToolCall) => {
@@ -478,6 +488,7 @@ export function useProjectFiles() {
     loadFiles,
     syncFileChange,
     readProjectFiles,
+    getRepositoryDescriptor,
     executeClientFileTool,
     executeClientGitTool,
     openFile,

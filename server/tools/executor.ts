@@ -1,8 +1,8 @@
 /**
- * [INPUT]: LLM tool_call metadata + ToolExecutionContext
- * [OUTPUT]: structured tool execution result for role=tool messages
+ * [INPUT]: LLM tool_call metadata + project/owner context + optional AgentRun invocation transaction context
+ * [OUTPUT]: structured tool execution result，必要时把 mutation/image attribution 写入同一持久事务
  * [POS]: A 域工具执行层 —— 把 LLM 工具调用分发到 server/files.ts
- * [PROTOCOL]: LLM 不传 projectId/ownerId；当前项目由 ToolExecutionContext 绑定
+ * [PROTOCOL]: LLM 不传 projectId/ownerId/run identity；可信编排层通过 ToolExecutionContext 绑定
  */
 import "server-only";
 import { z } from "zod";
@@ -17,6 +17,7 @@ import {
   readProjectFile,
   renameProjectFile,
   searchProjectFiles,
+  type DatabaseFileTransaction,
   type ProjectTextSearchResult,
   writeProjectFile,
 } from "@/server/files";
@@ -50,6 +51,11 @@ export type ToolExecutionContext = {
   ownerId: string;
   projectId: string;
   conversationId: string;
+  databaseWriter?: DatabaseFileTransaction;
+  agentRun?: {
+    id: string;
+    invocationId: string;
+  };
 };
 
 export type ToolExecutionResult =
@@ -119,12 +125,18 @@ export async function executeToolCall(
           args.path,
           args.content,
           args.expectedRevision,
+          ctx.databaseWriter,
         );
         return { status: "ok", tool, path: file.path, updatedAt: file.updatedAt, revision: file.revision };
       }
       case ToolName.DeleteFile: {
         const args = DeleteFileArgsSchema.parse(parseArgs(toolCall.arguments));
-        const result = await deleteProjectFile(ctx.projectId, args.path, args.expectedRevision);
+        const result = await deleteProjectFile(
+          ctx.projectId,
+          args.path,
+          args.expectedRevision,
+          ctx.databaseWriter,
+        );
         return { status: "ok", tool, path: args.path, revision: result.revision };
       }
       case ToolName.RenameFile: {
@@ -134,6 +146,7 @@ export async function executeToolCall(
           args.oldPath,
           args.newPath,
           args.expectedRevision,
+          ctx.databaseWriter,
         );
         return {
           status: "ok",
@@ -198,6 +211,9 @@ export async function executeToolCall(
           conversationId: ctx.conversationId,
           toolCallId: toolCall.id,
           input: args,
+          agentRunId: ctx.agentRun?.id,
+          toolInvocationId: ctx.agentRun?.invocationId,
+          writer: ctx.databaseWriter,
         });
         return pendingImageRunResult(run);
       }

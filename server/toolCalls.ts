@@ -173,6 +173,7 @@ async function imageToolReadiness(
       return TailToolCallReadiness.WaitingAsync;
     case ImageRunStatus.Succeeded:
     case ImageRunStatus.Failed:
+    case ImageRunStatus.Cancelled:
       throw new TailToolCallError(
         TailToolCallErrorCode.TerminalImageResultMissing,
         toolCallId,

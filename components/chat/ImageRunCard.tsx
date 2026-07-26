@@ -16,13 +16,13 @@ function jobTitle(job: ImageJobView, index: number, fallback: string) {
 
 function statusTone(status: ImageRunView["status"]) {
   if (status === ImageRunStatus.Succeeded) return "text-green";
-  if (status === ImageRunStatus.Failed) return "text-red";
+  if (status === ImageRunStatus.Failed || status === ImageRunStatus.Cancelled) return "text-red";
   return "text-yellow";
 }
 
 function statusText(status: ImageRunView["status"], t: ReturnType<typeof useTranslations<"Chat">>) {
   if (status === ImageRunStatus.Succeeded) return t("imageRunSucceeded");
-  if (status === ImageRunStatus.Failed) return t("imageRunFailed");
+  if (status === ImageRunStatus.Failed || status === ImageRunStatus.Cancelled) return t("imageRunFailed");
   return t("imageRunRunning");
 }
 
@@ -40,7 +40,7 @@ function JobPreview({ job, index }: { job: ImageJobView; index: number }) {
               <ExternalLink size={14} strokeWidth={2} />
             </span>
           </a>
-        ) : job.status === ImageJobStatus.Failed ? (
+        ) : job.status === ImageJobStatus.Failed || job.status === ImageJobStatus.Cancelled ? (
           <div className="flex h-full items-center justify-center text-red">
             <AlertCircle size={22} strokeWidth={1.9} />
           </div>
@@ -110,7 +110,7 @@ export default function ImageRunCard({ run, onResume }: { run: ImageRunView; onR
 
   const Icon = current.status === ImageRunStatus.Succeeded
     ? CheckCircle2
-    : current.status === ImageRunStatus.Failed
+    : current.status === ImageRunStatus.Failed || current.status === ImageRunStatus.Cancelled
       ? AlertCircle
       : ImageIcon;
 
