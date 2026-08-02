@@ -214,6 +214,34 @@ function restoreRunIsBusy(run: AgentRunSnapshot | null): boolean {
   return Boolean(run && !agentRunIsTerminal(run.status));
 }
 
+function restoredRunActivity(
+  status: AgentRunStatus,
+  t: ReturnType<typeof useTranslations<"Agent">>,
+): string {
+  switch (status) {
+    case AgentRunStatus.Running:
+      return t("runRunning");
+    case AgentRunStatus.WaitingClientTool:
+      return t("runWaitingClientTool");
+    case AgentRunStatus.WaitingAsyncTool:
+      return t("runWaitingAsyncTool");
+    case AgentRunStatus.WaitingExternal:
+      return t("runWaitingExternal");
+    case AgentRunStatus.WaitingResume:
+      return t("runWaitingResume");
+    case AgentRunStatus.WaitingFeedback:
+      return t("runWaitingFeedback");
+    case AgentRunStatus.Blocked:
+      return t("runBlocked");
+    case AgentRunStatus.Completed:
+      return t("waitingUser");
+    case AgentRunStatus.Failed:
+      return t("requestFailed");
+    case AgentRunStatus.Cancelled:
+      return t("stopped");
+  }
+}
+
 function runFailureError(run: AgentRunSnapshot): Error {
   if (run.failure) return new Error(`${run.failure.code}: ${run.failure.message}`);
   return new Error(`PROTOCOL_VIOLATION: AgentRun ${run.id} is ${run.status} without failure details.`);
@@ -454,8 +482,9 @@ export function useChat(deps: UseChatDeps) {
       setBusy(restoredBusy);
       const lastAiMessage = [...restored].reverse().find((message) => message.role === "ai");
       curAiIdRef.current = lastAiMessage?.id ?? "";
-      if (restoredBusy) {
+      if (run && restoredBusy) {
         useConversationStore.getState().startTurn(curAiIdRef.current);
+        setAgentActivity(restoredRunActivity(run.status, t));
       } else {
         finishAgentTurn();
       }
@@ -463,8 +492,13 @@ export function useChat(deps: UseChatDeps) {
         deps.onError(runFailureError(run));
       }
     },
-    [deps, detachCurrentTransport, setProjectContext]
+    [deps, detachCurrentTransport, setProjectContext, t]
   );
+
+  const restoreActivityAfterStopFailure = useCallback(() => {
+    const run = activeRunSnapshotRef.current;
+    setAgentActivity(run ? restoredRunActivity(run.status, t) : t("runRunning"));
+  }, [t]);
 
   const applyTerminalStop = useCallback((
     request: StopRequest,
@@ -539,6 +573,7 @@ export function useChat(deps: UseChatDeps) {
       } catch (error) {
         if (stopRequestedRef.current === request) {
           stopRequestedRef.current = null;
+          restoreActivityAfterStopFailure();
           deps.onError(error);
         }
         return false;
@@ -549,7 +584,7 @@ export function useChat(deps: UseChatDeps) {
       () => settleStopRequest(request, false),
     );
     return request.promise;
-  }, [applyTerminalStop, deps]);
+  }, [applyTerminalStop, deps, restoreActivityAfterStopFailure]);
 
   const persistRequestIdentityStop = useCallback((
     request: StopRequest,
@@ -590,6 +625,7 @@ export function useChat(deps: UseChatDeps) {
       } catch (error) {
         if (stopRequestedRef.current === request) {
           stopRequestedRef.current = null;
+          restoreActivityAfterStopFailure();
           deps.onError(error);
         }
         return false;
@@ -600,7 +636,7 @@ export function useChat(deps: UseChatDeps) {
       () => settleStopRequest(request, false),
     );
     return request.promise;
-  }, [applyTerminalStop, deps]);
+  }, [applyTerminalStop, deps, restoreActivityAfterStopFailure]);
 
   const stopRequestedForTransport = useCallback(async (
     controller: AbortController,
@@ -1589,12 +1625,13 @@ export function useChat(deps: UseChatDeps) {
       activeUserRequest?.requestId ?? null,
     );
     stopRequestedRef.current = request;
+    setAgentActivity(t("stopping"));
     if (identity) {
       void persistStopRequest(request, identity);
     } else if (activeUserRequest) {
       void persistRequestIdentityStop(request, activeUserRequest.requestId);
     }
-  }, [deps, persistRequestIdentityStop, persistStopRequest]);
+  }, [deps, persistRequestIdentityStop, persistStopRequest, t]);
 
   const rerun = useCallback(() => {
     if (lastPromptRef.current) send(lastPromptRef.current, lastAttachmentsRef.current);

@@ -111,7 +111,11 @@ export default function ChatPanel({
 }) {
   const t = useTranslations("Chat");
   const busy = useConversationStore((state) => state.busy);
+  const activeAiId = useConversationStore((state) => state.activeAiId);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const hasActiveAiMessage = messages.some(
+    (message) => message.role === "ai" && message.id === activeAiId,
+  );
   const quick = [
     { label: t("quickTodo"), prompt: t("promptTodo") },
     { label: t("quickCounter"), prompt: t("promptCounter") },
@@ -164,6 +168,17 @@ export default function ChatPanel({
               </div>
             </div>
           )
+        )}
+
+        {busy && !hasActiveAiMessage && (
+          <div className="flex max-w-full">
+            <div className="min-w-0 max-w-[min(88%,760px)] rounded-2xl rounded-tl-md border border-border bg-panel2/95 px-3.5 py-2.5 text-[13.5px] leading-[1.65] text-fg">
+              <AiBubble
+                m={{ id: activeAiId, role: "ai", attempts: [] }}
+                onResume={onResume}
+              />
+            </div>
+          </div>
         )}
       </div>
 

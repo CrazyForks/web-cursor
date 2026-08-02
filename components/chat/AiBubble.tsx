@@ -212,7 +212,7 @@ export default function AiBubble({ m, onResume }: { m: AiMsg; onResume: () => vo
 
       {m.attempts.length === 0 && busy && !m.chatText && !m.fileChanges?.length && !m.fileWriteStreams?.length && !m.imageRuns?.length && (
         <span>
-          <Spinner /> {t("generating")}
+          <Spinner /> {activityText || t("generating")}
         </span>
       )}
 
