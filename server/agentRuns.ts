@@ -75,10 +75,9 @@ export const AgentRunLeaseConfig = {
   HeartbeatIntervalMs: 15_000,
 } as const;
 
-export const AgentRunBudget = {
-  ModelRounds: 16,
-  ToolRounds: 16,
-} as const;
+// The persisted max-round columns remain for schema/API compatibility. They no
+// longer control execution; round counters are observational data only.
+const AGENT_RUN_ROUND_COUNTER_CEILING = 2_147_483_647;
 
 export const AgentRunServiceErrorCode = {
   NotFound: "AGENT_RUN_NOT_FOUND",
@@ -474,8 +473,8 @@ export async function createAgentRun(input: {
         heartbeatAt: leaseId ? now : null,
         harnessIdentity: input.harnessIdentity,
         repository,
-        maxModelRounds: AgentRunBudget.ModelRounds,
-        maxToolRounds: AgentRunBudget.ToolRounds,
+        maxModelRounds: AGENT_RUN_ROUND_COUNTER_CEILING,
+        maxToolRounds: AGENT_RUN_ROUND_COUNTER_CEILING,
         startedAt: now,
         createdAt: now,
         updatedAt: now,
@@ -615,12 +614,6 @@ export async function beginAgentModelRound(input: {
     const current = await ownedRunRow(tx, input.runId, input.ownerId);
     const now = new Date();
     assertLease(current, input.attempt, input.leaseId, now);
-    if (current.modelRounds >= current.maxModelRounds) {
-      throw new AgentRunServiceError(
-        AgentRunServiceErrorCode.BudgetExceeded,
-        `Run ${current.id} exhausted its model-round budget.`,
-      );
-    }
     const [row] = await tx
       .update(agentRuns)
       .set({
@@ -671,13 +664,6 @@ export async function recordAgentToolRound(input: {
         `Model round ${input.modelRound} is not current round ${current.modelRounds}.`,
       );
     }
-    if (current.toolRounds >= current.maxToolRounds) {
-      throw new AgentRunServiceError(
-        AgentRunServiceErrorCode.BudgetExceeded,
-        `Run ${current.id} exhausted its tool-round budget.`,
-      );
-    }
-
     await lockConversation(tx, current.conversationId);
     const toolCalls = input.invocations.map(({ toolCall }) => toolCall);
     const assistant = await appendMessage(current.conversationId, {
