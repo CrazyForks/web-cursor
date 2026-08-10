@@ -2,7 +2,8 @@
  * [INPUT]: strict user/resume/preview_feedback ChatTurn
  * [OUTPUT]: AgentRun-bound SSE plus durable transcript/tool invocation ledger
  * [POS]: A 域 AgentRun 执行器 —— HTTP 只持有可续租 lease，运行事实由 server/agentRuns.ts 持久化
- * [PROTOCOL]: 每轮先持久化 run/model/tool identity；所有副作用执行前过 run fence，Stop 先落库再使迟到结果失效
+ * [PROTOCOL]: 每轮主模型调用前严格准备 Checkpoint context，再持久化 model/tool identity；
+ *   所有副作用执行前过 run fence，Stop 先落库再使迟到结果失效
  */
 import { and, eq, isNull } from "drizzle-orm";
 import type { ChatCompletionCreateParamsStreaming } from "openai/resources/chat/completions";
@@ -49,7 +50,16 @@ import {
   AgentHarnessRestoreError,
   restoreAgentHarness,
 } from "@/server/agentHarness";
-import { toLLMMessages } from "@/server/context";
+import {
+  ContextCompactionError,
+  ContextCompactionErrorCode,
+  prepareAgentContext,
+} from "@/server/contextCheckpoint";
+import {
+  DeepSeekUsageSchema,
+  type ContextTokenBaseline,
+  type DeepSeekUsage,
+} from "@/server/contextTokenEstimate";
 import { maybeAppendFigmaConnectionGate } from "@/server/integrations/figmaGate";
 import llmClient from "@/server/llm";
 import { listMessages } from "@/server/messages";
@@ -83,6 +93,7 @@ import type { AttachmentSummary } from "@/types/attachment";
 import {
   ChatEventSchema,
   ChatEventType,
+  ContextCompactionPhase,
   ChatTurnSchema,
   FileChangeOperation,
   type ChatEvent,
@@ -148,46 +159,58 @@ function withRun(
   });
 }
 
-function assistantMessages(
-  rows: DbMessage[],
-  harness: ResolvedAgentHarness,
-) {
-  return [
-    { role: "system" as const, content: harness.systemPrompt },
-    ...toLLMMessages(rows),
-  ];
-}
-
 async function requestAssistant(
-  rows: DbMessage[],
+  messages: ChatCompletionCreateParamsStreaming["messages"],
   harness: ResolvedAgentHarness,
   signal: AbortSignal,
 ) {
   const params: DeepSeekStreamingParams = {
-    messages: assistantMessages(rows, harness),
+    messages,
     model: harness.model,
     tools: harness.tools,
     tool_choice: harness.toolChoice,
     stream: harness.stream,
+    stream_options: { include_usage: true },
     thinking: harness.thinking,
   };
   return llmClient.chat.completions.create(params, { signal });
 }
 
 async function collectAssistantTurn(
-  rows: DbMessage[],
+  messages: ChatCompletionCreateParamsStreaming["messages"],
   harness: ResolvedAgentHarness,
   send: (event: ChatEventPayload) => void,
   signal: AbortSignal,
-): Promise<{ text: string; toolCalls: ToolCallMeta[] }> {
-  const stream = await requestAssistant(rows, harness, signal);
+): Promise<{
+  text: string;
+  toolCalls: ToolCallMeta[];
+  usage: DeepSeekUsage;
+}> {
+  const stream = await requestAssistant(messages, harness, signal);
   const toolCalls = new ToolCallStreamAssembler();
   const announced = new Set<number>();
   const fileStreams = new Map<number, WriteFileStreamState>();
   let text = "";
+  let usage: DeepSeekUsage | null = null;
 
   for await (const chunk of stream) {
     signal.throwIfAborted();
+    if (chunk.usage) {
+      const parsed = DeepSeekUsageSchema.safeParse(chunk.usage);
+      if (!parsed.success) {
+        throw new ContextCompactionError(
+          ContextCompactionErrorCode.ProviderUsageInvalid,
+          parsed.error.message,
+        );
+      }
+      if (usage && usage.total_tokens !== parsed.data.total_tokens) {
+        throw new ContextCompactionError(
+          ContextCompactionErrorCode.ProviderUsageInvalid,
+          "DeepSeek emitted conflicting total_tokens values.",
+        );
+      }
+      usage = parsed.data;
+    }
     const choice = chunk.choices[0];
     toolCalls.observeFinishReason(choice?.finish_reason);
     const delta = choice?.delta;
@@ -234,7 +257,30 @@ async function collectAssistantTurn(
     }
   }
 
-  return { text, toolCalls: toolCalls.finish() };
+  if (!usage) {
+    throw new ContextCompactionError(
+      ContextCompactionErrorCode.ProviderUsageMissing,
+      "DeepSeek stream ended without the requested usage chunk.",
+    );
+  }
+  return { text, toolCalls: toolCalls.finish(), usage };
+}
+
+function tokenBaselineFromTranscript(
+  rows: readonly DbMessage[],
+  usage: DeepSeekUsage,
+): ContextTokenBaseline {
+  const last = rows.at(-1);
+  if (!last || !Number.isSafeInteger(last.seq) || last.seq <= 0) {
+    throw new ContextCompactionError(
+      ContextCompactionErrorCode.ProviderUsageInvalid,
+      "Cannot bind DeepSeek usage to a persisted transcript boundary.",
+    );
+  }
+  return {
+    providerTotalTokens: usage.total_tokens,
+    coveredThroughSeq: last.seq,
+  };
 }
 
 async function withLeaseHeartbeat<T>(
@@ -569,21 +615,46 @@ async function runAgentLoop(input: {
     }
   }
 
+  let tokenBaseline: ContextTokenBaseline | null = null;
   while (true) {
     input.signal.throwIfAborted();
+    const rows = await listMessages(run.conversationId);
+    const prepared = await withLeaseHeartbeat(
+      input.execution,
+      input.ownerId,
+      input.signal,
+      (contextSignal) => prepareAgentContext({
+        conversationId: run.conversationId,
+        currentRunId: run.id,
+        rows,
+        systemPrompt: input.harness.systemPrompt,
+        tools: input.harness.tools,
+        baseline: tokenBaseline,
+        signal: contextSignal,
+        onCompactionStarted: () => input.send({
+          type: ChatEventType.ContextCompaction,
+          phase: ContextCompactionPhase.Started,
+        }),
+      }),
+    );
+    if (prepared.compacted) {
+      input.send({
+        type: ChatEventType.ContextCompaction,
+        phase: ContextCompactionPhase.Completed,
+      });
+    }
     const modelRound = await beginAgentModelRound({
       ownerId: input.ownerId,
       runId: run.id,
       attempt: run.attempt,
       leaseId: input.execution.leaseId,
     });
-    const rows = await listMessages(run.conversationId);
     const assistant = await withLeaseHeartbeat(
       input.execution,
       input.ownerId,
       input.signal,
       (modelSignal) => collectAssistantTurn(
-        rows,
+        prepared.messages,
         input.harness,
         input.send,
         modelSignal,
@@ -620,6 +691,10 @@ async function runAgentLoop(input: {
         effect: agentToolEffect(toolCall.name),
       })),
     });
+    tokenBaseline = tokenBaselineFromTranscript(
+      await listMessages(run.conversationId),
+      assistant.usage,
+    );
 
     const rejection = invalidRoundMessage(invocations);
     if (rejection) {

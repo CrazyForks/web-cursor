@@ -23,7 +23,14 @@ import { useConversationStore } from "@/lib/conversationStore";
 import { AiTimelineItemKind } from "@/lib/types";
 import type { AgentFileChange, AiTimelineItem, ImageRunView, Message, SendAttachment, Status } from "@/lib/types";
 import type { ProjectFileSummary } from "@/lib/projectTypes";
-import { ChatEventType, ChatTurnSchema, FileChangeOperation, type ChatEvent, type ChatTurn } from "@/types/chat";
+import {
+  ChatEventType,
+  ChatTurnSchema,
+  ContextCompactionPhase,
+  FileChangeOperation,
+  type ChatEvent,
+  type ChatTurn,
+} from "@/types/chat";
 import {
   AgentRunRequestStopOutcome,
   AgentRunStatus,
@@ -747,6 +754,37 @@ export function useChat(deps: UseChatDeps) {
             }
             latestRun = ev.run;
             activeRunSnapshotRef.current = ev.run;
+          } else if (ev.type === ChatEventType.ContextCompaction) {
+            const id = `context-compaction-${ev.agentRunId}-${ev.attempt}`;
+            const stamp = markTimeline();
+            updateAi((m) => {
+              const timeline = m.timeline ?? [];
+              const existing = timeline.findIndex((item) => item.id === id);
+              if (existing < 0) {
+                return {
+                  ...m,
+                  timeline: appendTimelineItem(timeline, {
+                    id,
+                    kind: AiTimelineItemKind.ContextCompaction,
+                    phase: ev.phase,
+                    ...stamp,
+                  }),
+                };
+              }
+              return {
+                ...m,
+                timeline: timeline.map((item, index) =>
+                  index === existing && item.kind === AiTimelineItemKind.ContextCompaction
+                    ? { ...item, phase: ev.phase }
+                    : item
+                ),
+              };
+            });
+            setAgentActivity(
+              ev.phase === ContextCompactionPhase.Started
+                ? t("contextCompactionStarted")
+                : t("contextCompactionCompleted"),
+            );
           } else if (ev.type === ChatEventType.ToolsCall) {
             if (ev.name === ToolName.RunPreview) {
               deps.setPreviewStatus({ kind: "load", text: t("runningPreview") });

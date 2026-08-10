@@ -82,9 +82,21 @@ export const conversations = pgTable("conversations", {
   id: uuid("id").primaryKey().defaultRandom(),
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   title: text("title"),
+  contextSummary: text("context_summary"),
+  contextSummaryThroughSeq: bigint("context_summary_through_seq", { mode: "number" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
-});
+}, (t) => ({
+  contextSummaryComplete: check(
+    "ck_conversations_context_summary_complete",
+    sql`(${t.contextSummary} is null and ${t.contextSummaryThroughSeq} is null)
+      or (${t.contextSummary} is not null and ${t.contextSummaryThroughSeq} is not null)`,
+  ),
+  contextSummarySeqPositive: check(
+    "ck_conversations_context_summary_seq_positive",
+    sql`${t.contextSummaryThroughSeq} is null or ${t.contextSummaryThroughSeq} > 0`,
+  ),
+}));
 
 export const agentRuns = pgTable("agent_runs", {
   id: uuid("id").primaryKey().defaultRandom(),

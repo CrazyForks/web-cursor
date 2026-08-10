@@ -10,6 +10,7 @@ import { AiTimelineItemKind } from "@/lib/types";
 import type { AgentFileChange } from "@/lib/types";
 import type { Message, Phase } from "@/lib/types";
 import { useConversationStore } from "@/lib/conversationStore";
+import { ContextCompactionPhase } from "@/types/chat";
 
 type AiMsg = Extract<Message, { role: "ai" }>;
 type FileWriteStream = NonNullable<AiMsg["fileWriteStreams"]>[number];
@@ -184,6 +185,25 @@ export default function AiBubble({ m, onResume }: { m: AiMsg; onResume: () => vo
   function renderTimelineItem(item: NonNullable<typeof timeline>[number]) {
     if (item.kind === AiTimelineItemKind.Chat) return renderChatText(item.id);
 
+    if (item.kind === AiTimelineItemKind.ContextCompaction) {
+      const active = item.phase === ContextCompactionPhase.Started;
+      return (
+        <div
+          key={item.id}
+          className="mt-2 inline-flex items-center gap-2 rounded-lg border border-border bg-codebg px-2.5 py-1.5 text-[12.5px] text-muted"
+        >
+          {active
+            ? <Spinner />
+            : <span className="flex h-4 w-4 items-center justify-center rounded-full bg-green text-[10px] text-white">✓</span>}
+          <span>
+            {active
+              ? t("contextCompactionStarted")
+              : t("contextCompactionCompleted")}
+          </span>
+        </div>
+      );
+    }
+
     if (item.kind === AiTimelineItemKind.FileWriteStream) {
       const stream = m.fileWriteStreams?.find((candidate) => candidate.toolCallId === item.toolCallId);
       return stream ? <FileWriteStreamBlock key={item.id} stream={stream} /> : null;
@@ -210,7 +230,7 @@ export default function AiBubble({ m, onResume }: { m: AiMsg; onResume: () => vo
         </div>
       )}
 
-      {m.attempts.length === 0 && busy && !m.chatText && !m.fileChanges?.length && !m.fileWriteStreams?.length && !m.imageRuns?.length && (
+      {m.attempts.length === 0 && busy && !m.chatText && !m.fileChanges?.length && !m.fileWriteStreams?.length && !m.imageRuns?.length && !m.timeline?.length && (
         <span>
           <Spinner /> {activityText || t("generating")}
         </span>

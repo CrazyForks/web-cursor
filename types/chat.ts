@@ -58,6 +58,7 @@ export const ChatEventType = {
   ToolPending: "tool_pending",
   FilesChanged: "files_changed",
   IntegrationCard: "integration_card",
+  ContextCompaction: "context_compaction",
   Title: "title",
   RunState: "run_state",
   Done: "done",
@@ -65,6 +66,14 @@ export const ChatEventType = {
 } as const;
 
 export type ChatEventType = typeof ChatEventType[keyof typeof ChatEventType];
+
+export const ContextCompactionPhase = {
+  Started: "started",
+  Completed: "completed",
+} as const;
+
+export type ContextCompactionPhase =
+  typeof ContextCompactionPhase[keyof typeof ContextCompactionPhase];
 
 export const FileChangeOperation = ProjectFileOperation;
 
@@ -140,6 +149,11 @@ export const ChatEventSchema = z.discriminatedUnion("type", [
     ...ChatEventRunShape,
     type: z.literal(ChatEventType.IntegrationCard),
     meta: IntegrationCardMetaSchema,
+  }).strict(),
+  z.object({
+    ...ChatEventRunShape,
+    type: z.literal(ChatEventType.ContextCompaction),
+    phase: z.enum(ContextCompactionPhase),
   }).strict(),
   z.object({
     ...ChatEventRunShape,

@@ -10,6 +10,7 @@ import type {
   ImageRunStatus,
 } from "@/types/image";
 import type { IntegrationCardMeta } from "@/types/integration";
+import type { ContextCompactionPhase } from "@/types/chat";
 
 export type Phase =
   | "writing"
@@ -60,6 +61,7 @@ export type ImageRunView = {
 
 export const AiTimelineItemKind = {
   Chat: "chat",
+  ContextCompaction: "context_compaction",
   FileWriteStream: "file_write_stream",
   FileChange: "file_change",
   ImageRun: "image_run",
@@ -69,6 +71,13 @@ export type AiTimelineItem =
   | {
       id: string;
       kind: typeof AiTimelineItemKind.Chat;
+      receivedAt: number;
+      order: number;
+    }
+  | {
+      id: string;
+      kind: typeof AiTimelineItemKind.ContextCompaction;
+      phase: ContextCompactionPhase;
       receivedAt: number;
       order: number;
     }

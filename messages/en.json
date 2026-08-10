@@ -157,6 +157,8 @@
     "changeRename": "Rename",
     "changeWrite": "Write",
     "writingFile": "Writing file...",
+    "contextCompactionStarted": "Organizing the long conversation context…",
+    "contextCompactionCompleted": "Context organization complete",
     "lines": "lines",
     "collapse": "Collapse"
   },
@@ -170,6 +172,8 @@
     "writingFiles": "AI is writing files…",
     "readingFiles": "AI is reading files…",
     "generatingImages": "AI is generating images…",
+    "contextCompactionStarted": "Organizing the long conversation context…",
+    "contextCompactionCompleted": "Context organization complete",
     "toolFailed": "{name} failed",
     "toolFailedHandling": "{name} failed; AI is handling it…",
     "fileUpdated": "AI updated {path}",

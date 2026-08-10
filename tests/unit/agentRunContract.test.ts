@@ -19,6 +19,11 @@ import {
   type AgentRunStatus as AgentRunStatusValue,
 } from "../../types/agentRun";
 import { ProjectStorageKind } from "../../types/projectStorage";
+import {
+  ChatEventSchema,
+  ChatEventType,
+  ContextCompactionPhase,
+} from "../../types/chat";
 
 const statuses = Object.values(AgentRunStatus);
 
@@ -218,6 +223,34 @@ describe("AgentRun public API schemas", () => {
       ...requestReceipt,
       outcome: AgentRunRequestStopOutcome.RunTerminal,
       run: snapshot,
+    }).success).toBe(false);
+  });
+});
+
+describe("Context compaction SSE contract", () => {
+  it("accepts only explicit started and completed phases", () => {
+    const identity = {
+      agentRunId: snapshot.id,
+      attempt: snapshot.attempt,
+      type: ChatEventType.ContextCompaction,
+    };
+
+    expect(ChatEventSchema.parse({
+      ...identity,
+      phase: ContextCompactionPhase.Started,
+    })).toMatchObject({ phase: ContextCompactionPhase.Started });
+    expect(ChatEventSchema.parse({
+      ...identity,
+      phase: ContextCompactionPhase.Completed,
+    })).toMatchObject({ phase: ContextCompactionPhase.Completed });
+    expect(ChatEventSchema.safeParse({
+      ...identity,
+      phase: "running",
+    }).success).toBe(false);
+    expect(ChatEventSchema.safeParse({
+      ...identity,
+      phase: ContextCompactionPhase.Started,
+      percent: 50,
     }).success).toBe(false);
   });
 });
